@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   BookOpen,
   CircleUser,
@@ -17,6 +17,8 @@ import {
   createDemoMeeting,
   getMeetingViewModel,
 } from './domain/meeting'
+import { formatMeetingMarkdown } from './domain/markdown'
+import { createDefaultMeetingRepository } from './domain/storage'
 
 type Route = 'today' | 'meeting' | 'library' | 'settings'
 type SettingsPane = 'general' | 'audio' | 'ai' | 'exports' | 'about'
@@ -44,9 +46,13 @@ const routeTitles: Record<Route, string> = {
 }
 
 export function App() {
+  const meetingRepository = useMemo(() => createDefaultMeetingRepository(), [])
   const [route, setRoute] = useState<Route>('today')
   const [settingsPane, setSettingsPane] = useState<SettingsPane>('general')
-  const [meeting, setMeeting] = useState<Meeting>(() => createDemoMeeting('recording'))
+  const [meeting, setMeeting] = useState<Meeting>(
+    () => meetingRepository.get('product-sync-alex') ?? createDemoMeeting('recording'),
+  )
+  const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'ready'>('idle')
   const view = getMeetingViewModel(meeting)
 
   const meetings = useMemo(
@@ -65,7 +71,10 @@ export function App() {
   }
 
   const stopRecording = () => {
-    setMeeting(createDemoMeeting('ready'))
+    setMeeting((current) => ({
+      ...createDemoMeeting('ready'),
+      manualNotes: current.manualNotes,
+    }))
     setRoute('meeting')
   }
 
@@ -75,6 +84,31 @@ export function App() {
       manualNotes: current.manualNotes,
     }))
   }
+
+  const copyMarkdown = async () => {
+    const markdown = formatMeetingMarkdown(meeting)
+
+    try {
+      if (globalThis.navigator?.clipboard?.writeText) {
+        await globalThis.navigator.clipboard.writeText(markdown)
+        setCopyStatus('copied')
+        return
+      }
+    } catch {
+      setCopyStatus('ready')
+      return
+    }
+
+    setCopyStatus('ready')
+  }
+
+  useEffect(() => {
+    meetingRepository.save(meeting)
+  }, [meeting, meetingRepository])
+
+  useEffect(() => {
+    setCopyStatus('idle')
+  }, [meeting.id, meeting.phase])
 
   return (
     <div className="app">
@@ -97,6 +131,8 @@ export function App() {
             view={view}
             onStopRecording={stopRecording}
             onRegenerate={regenerateAiNotes}
+            onCopyMarkdown={copyMarkdown}
+            copyStatus={copyStatus}
           />
         )}
         {route === 'library' && <LibraryPage meetings={meetings} onOpenMeeting={() => setRoute('meeting')} />}
@@ -194,11 +230,15 @@ function MeetingPage({
   view,
   onStopRecording,
   onRegenerate,
+  onCopyMarkdown,
+  copyStatus,
 }: {
   meeting: Meeting
   view: ReturnType<typeof getMeetingViewModel>
   onStopRecording: () => void
   onRegenerate: () => void
+  onCopyMarkdown: () => void
+  copyStatus: 'idle' | 'copied' | 'ready'
 }) {
   const contextPreview = buildAiNotesContext(meeting)
 
@@ -211,7 +251,13 @@ function MeetingPage({
         </>
       ) : (
         <>
-          <AiNotesPane meeting={meeting} onRegenerate={onRegenerate} contextPreview={contextPreview} />
+          <AiNotesPane
+            meeting={meeting}
+            onRegenerate={onRegenerate}
+            onCopyMarkdown={onCopyMarkdown}
+            copyStatus={copyStatus}
+            contextPreview={contextPreview}
+          />
           <TranscriptPane title="Original Transcript" subtitle="Source for AI Notes" meeting={meeting} />
         </>
       )}
@@ -257,13 +303,23 @@ function ManualNotesPane({
 function AiNotesPane({
   meeting,
   onRegenerate,
+  onCopyMarkdown,
+  copyStatus,
   contextPreview,
 }: {
   meeting: Meeting
   onRegenerate: () => void
+  onCopyMarkdown: () => void
+  copyStatus: 'idle' | 'copied' | 'ready'
   contextPreview: string
 }) {
   const notes = meeting.aiNotes
+  const copyLabel =
+    copyStatus === 'copied'
+      ? 'Copied'
+      : copyStatus === 'ready'
+        ? 'Markdown Ready'
+        : 'Copy Markdown'
 
   return (
     <div className="pane jelly-card ai-main">
@@ -323,8 +379,10 @@ function AiNotesPane({
       )}
       <div className="marker-bar">
         <button onClick={onRegenerate}>Regenerate</button>
-        <button>Copy Markdown</button>
-        <button>Export</button>
+        <button onClick={onCopyMarkdown} disabled={!notes}>
+          {copyLabel}
+        </button>
+        <button disabled={!notes}>Export</button>
       </div>
     </div>
   )

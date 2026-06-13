@@ -762,9 +762,38 @@ MVP should support:
 3. Ollama.
 4. Optional official hosted LLM later.
 
+### Current Provider Boundary
+
+The current implementation includes provider interfaces before real provider calls:
+
+1. `TranscriptionProvider`
+   - Input: meeting id, local audio URI, optional start timestamp.
+   - Output: timestamped transcript lines.
+   - Current implementation: mock provider for local tests.
+
+2. `AiNotesProvider`
+   - Input: meeting object plus generation context.
+   - Output: structured AI Notes.
+   - Current implementation: mock provider based on markers and transcript length.
+
+Rules:
+
+1. UI code should not call provider-specific APIs directly.
+2. Real OpenAI/Groq/Ollama adapters should implement these provider interfaces.
+3. Provider credentials must live in settings/keychain storage, not in meeting records.
+4. Mock providers must remain available for offline tests and demos.
+
 ## 11. Local Data Model
 
 Suggested SQLite tables:
+
+Current implementation status:
+
+1. A JSON-backed `MeetingRepository` exists for the first desktop scaffold.
+2. The repository stores complete meeting objects in local browser/Tauri WebView storage.
+3. This is intentionally a bridge implementation, not the final storage layer.
+4. The final desktop implementation should replace it with Tauri commands backed by SQLite using the tables below.
+5. UI code should depend on the repository contract, not on localStorage or SQLite directly.
 
 ### meetings
 
@@ -1014,6 +1043,35 @@ After the initial push, the next meaningful slice should be local persistence pl
 7. Add a first real local file export.
 
 This keeps the next step small while moving the app from static demo data toward a real local-first tool.
+
+### 15.6 Implementation Slice 2: Local Foundation
+
+Completed in the second push:
+
+1. Added `JsonMeetingRepository` and `MemoryStorageAdapter`.
+2. Added a default meeting repository for browser/Tauri WebView storage.
+3. Wired the current meeting state to local persistence.
+4. Added provider interfaces for STT and AI Notes.
+5. Added mock STT and AI Notes providers.
+6. Added `formatMeetingMarkdown`.
+7. Wired Review's Copy Markdown action to generated AI Notes.
+8. Added unit tests for storage, providers, Markdown export, and UI copy behavior.
+
+Still intentionally not completed:
+
+1. Real SQLite storage.
+2. Real microphone/system audio capture.
+3. Real OpenAI/Groq/Ollama provider calls.
+4. File save dialog and local Markdown file export.
+5. Slack/Notion export adapters.
+
+Next recommended slice:
+
+1. Move repository calls behind Tauri commands.
+2. Add SQLite migrations.
+3. Persist meetings, notes, markers, transcript lines, and AI Notes separately.
+4. Add a local Markdown file export command.
+5. Add settings forms for provider base URL, model, and API key location.
 
 ## 16. Open Questions
 

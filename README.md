@@ -13,7 +13,16 @@ License: MIT.
 - Desktop UI prototype for review: `prototypes/desktop-ui.html`
 - Earlier web-style prototype for comparison: `prototypes/ui.html`
 
-This first version locks the desktop product model before adding real audio, STT, LLM, and export providers.
+This first version locks the desktop product model before adding real audio, STT, LLM, and hosted export providers.
+
+Implemented foundation:
+
+- Meeting mode domain rules for Focus and Review.
+- JSON-backed local meeting repository that can later be replaced by Tauri/SQLite.
+- Provider interfaces for transcription and AI Notes generation.
+- Mock STT and AI Notes providers for local development and tests.
+- Markdown formatting for AI Notes export.
+- Copy Markdown action in the Review workspace.
 
 ## Positioning
 
@@ -48,6 +57,7 @@ npm run tauri -- dev
 - Focus mode is for live capture: manual notes and markers in the main pane, live transcript on the right.
 - Review mode is for AI Notes: AI-generated notes in the main pane, original transcript on the right as source.
 - Settings keeps the two-column desktop preference structure used by OpenTypeless.
+- AI Notes exports default to the generated notes; transcript is included only when requested.
 
 ## Verification
 
