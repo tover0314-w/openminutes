@@ -1,0 +1,48 @@
+{
+  "name": "openminutes",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Open-source, local-first AI meeting notes desktop app",
+  "keywords": [
+    "meeting-notes",
+    "transcription",
+    "ai-notes",
+    "tauri",
+    "desktop",
+    "local-first"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/tover0314-w/openminutes"
+  },
+  "author": "OpenMinutes Contributors",
+  "license": "MIT",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1 --port 1421",
+    "build": "tsc && vite build",
+    "preview": "vite preview --host 127.0.0.1",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "2.11.0",
+    "lucide-react": "^0.460.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "2.11.2",
+    "@testing-library/jest-dom": "^6.6.3",
+    "@testing-library/react": "^16.3.0",
+    "@testing-library/user-event": "^14.6.1",
+    "@types/react": "^19.1.8",
+    "@types/react-dom": "^19.1.6",
+    "@vitejs/plugin-react": "^6.0.2",
+    "jsdom": "^25.0.1",
+    "typescript": "~5.8.3",
+    "vite": "^8.0.16",
+    "vitest": "^4.1.8"
+  }
+}
