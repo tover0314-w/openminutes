@@ -790,10 +790,11 @@ Suggested SQLite tables:
 Current implementation status:
 
 1. A JSON-backed `MeetingRepository` exists for the first desktop scaffold.
-2. The repository stores complete meeting objects in local browser/Tauri WebView storage.
-3. This is intentionally a bridge implementation, not the final storage layer.
-4. The final desktop implementation should replace it with Tauri commands backed by SQLite using the tables below.
-5. UI code should depend on the repository contract, not on localStorage or SQLite directly.
+2. Browser development and tests use localStorage through the repository contract.
+3. Desktop runtime uses Tauri commands to store complete meeting objects in the app data directory.
+4. This is intentionally a bridge implementation, not the final normalized storage layer.
+5. The final desktop implementation should replace the JSON file with Tauri commands backed by SQLite using the tables below.
+6. UI code should depend on the repository contract, not on localStorage, raw Tauri invoke calls, or SQLite directly.
 
 ### meetings
 
@@ -1072,6 +1073,43 @@ Next recommended slice:
 3. Persist meetings, notes, markers, transcript lines, and AI Notes separately.
 4. Add a local Markdown file export command.
 5. Add settings forms for provider base URL, model, and API key location.
+
+### 15.7 Implementation Slice 3: Desktop Persistence and File Export
+
+Completed in the third push:
+
+1. Added Tauri commands:
+   - `load_meetings`
+   - `save_meeting`
+   - `delete_meeting`
+   - `export_meeting_markdown`
+2. Added desktop runtime detection and Tauri invoke wrapper.
+3. Added `TauriMeetingRepository` implementing the async repository contract.
+4. Wired the app to prefer Tauri app data persistence in desktop runtime.
+5. Kept browser/localStorage fallback for web development and tests.
+6. Added Markdown file export to `Documents/OpenMinutes`.
+7. Expanded Settings panes:
+   - Audio capture settings
+   - AI provider/base URL/model placeholders
+   - Export destination/integration placeholders
+   - About storage mode
+8. Added frontend and Rust tests for the new boundaries.
+
+Still intentionally not completed:
+
+1. SQLite migrations and normalized tables.
+2. OS keychain storage for provider credentials.
+3. Real provider HTTP calls.
+4. Native save dialog.
+5. Native audio capture.
+
+Next recommended slice:
+
+1. Add SQLite dependency and migration runner.
+2. Replace the JSON app data file with SQLite tables.
+3. Add a settings repository for provider configuration.
+4. Store provider secrets through the OS keychain.
+5. Add the first real OpenAI-compatible provider adapter behind the existing provider interface.
 
 ## 16. Open Questions
 

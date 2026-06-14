@@ -18,11 +18,12 @@ This first version locks the desktop product model before adding real audio, STT
 Implemented foundation:
 
 - Meeting mode domain rules for Focus and Review.
-- JSON-backed local meeting repository that can later be replaced by Tauri/SQLite.
+- JSON-backed local meeting repository with Tauri app data persistence and browser fallback.
 - Provider interfaces for transcription and AI Notes generation.
 - Mock STT and AI Notes providers for local development and tests.
 - Markdown formatting for AI Notes export.
 - Copy Markdown action in the Review workspace.
+- Save Markdown action for desktop exports to `Documents/OpenMinutes`.
 
 ## Positioning
 
@@ -65,4 +66,5 @@ npm run tauri -- dev
 npm test -- --run
 npm run build
 cargo check --manifest-path src-tauri/Cargo.toml
+cargo test --manifest-path src-tauri/Cargo.toml
 ```

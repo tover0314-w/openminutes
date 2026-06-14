@@ -36,6 +36,19 @@ describe('App', () => {
     expect(screen.getByText(/capture mode/i)).toBeInTheDocument()
   })
 
+  it('shows provider and export settings in separate panes', async () => {
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.click(screen.getByRole('button', { name: /settings/i }))
+    await user.click(screen.getByRole('button', { name: /^ai$/i }))
+    expect(screen.getByText(/openai compatible/i)).toBeInTheDocument()
+    expect(screen.getByDisplayValue(/https:\/\/api.openai.com\/v1/i)).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /exports/i }))
+    expect(screen.getByDisplayValue(/documents\/openminutes/i)).toBeInTheDocument()
+  })
+
   it('copies Review AI Notes as Markdown', async () => {
     const user = userEvent.setup()
     const writeText = vi.fn().mockResolvedValue(undefined)

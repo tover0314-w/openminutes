@@ -434,7 +434,7 @@ button {
 }
 
 .ai-section h3,
-.field-group label {
+.field-group > label {
   margin: 0 0 8px;
   color: var(--color-text-tertiary);
   font-size: 11px;
@@ -653,7 +653,7 @@ button {
   max-width: 560px;
 }
 
-.field-group label {
+.field-group > label {
   display: block;
 }
 
@@ -712,6 +712,42 @@ button {
   border-radius: var(--radius-full);
   background: white;
   box-shadow: var(--shadow-sm);
+}
+
+.toggle.off {
+  background: var(--color-bg-tertiary);
+}
+
+.toggle.off::after {
+  right: auto;
+  left: 2px;
+}
+
+.readonly-input {
+  width: 100%;
+  min-height: 42px;
+  display: grid;
+  grid-template-columns: 140px minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+}
+
+.readonly-input span {
+  color: var(--color-text-secondary);
+  font-size: 13px;
+}
+
+.readonly-input input {
+  height: 32px;
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-secondary);
+  color: var(--color-text-primary);
+  padding: 0 10px;
+  font-size: 13px;
 }
 
 .floating-capsule {

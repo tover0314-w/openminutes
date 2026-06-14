@@ -15,6 +15,13 @@ export interface MeetingRepository {
   delete(id: string): void
 }
 
+export interface AsyncMeetingRepository {
+  list(): Promise<Meeting[]>
+  get(id: string): Promise<Meeting | undefined>
+  save(meeting: Meeting): Promise<void>
+  delete(id: string): Promise<void>
+}
+
 interface MeetingEnvelope {
   version: 1
   savedAt: string

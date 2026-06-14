@@ -17,8 +17,10 @@ import {
   createDemoMeeting,
   getMeetingViewModel,
 } from './domain/meeting'
+import { exportMarkdownFile } from './desktop/markdownExport'
+import { createTauriMeetingRepository } from './desktop/meetingRepository'
 import { formatMeetingMarkdown } from './domain/markdown'
-import { createDefaultMeetingRepository } from './domain/storage'
+import { type AsyncMeetingRepository, createDefaultMeetingRepository } from './domain/storage'
 
 type Route = 'today' | 'meeting' | 'library' | 'settings'
 type SettingsPane = 'general' | 'audio' | 'ai' | 'exports' | 'about'
@@ -47,12 +49,17 @@ const routeTitles: Record<Route, string> = {
 
 export function App() {
   const meetingRepository = useMemo(() => createDefaultMeetingRepository(), [])
+  const [desktopRepository, setDesktopRepository] = useState<AsyncMeetingRepository | undefined>()
+  const [storageMode, setStorageMode] = useState<'browser' | 'desktop'>('browser')
   const [route, setRoute] = useState<Route>('today')
   const [settingsPane, setSettingsPane] = useState<SettingsPane>('general')
   const [meeting, setMeeting] = useState<Meeting>(
     () => meetingRepository.get('product-sync-alex') ?? createDemoMeeting('recording'),
   )
   const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'ready'>('idle')
+  const [exportStatus, setExportStatus] = useState<
+    'idle' | 'saved' | 'downloaded' | 'unavailable' | 'error'
+  >('idle')
   const view = getMeetingViewModel(meeting)
 
   const meetings = useMemo(
@@ -102,12 +109,53 @@ export function App() {
     setCopyStatus('ready')
   }
 
+  const saveMarkdown = async () => {
+    const markdown = formatMeetingMarkdown(meeting)
+
+    try {
+      const result = await exportMarkdownFile(meeting.title, markdown)
+      if (result.mode === 'tauri-file') {
+        setExportStatus('saved')
+      } else if (result.mode === 'browser-download') {
+        setExportStatus('downloaded')
+      } else {
+        setExportStatus('unavailable')
+      }
+    } catch {
+      setExportStatus('error')
+    }
+  }
+
+  useEffect(() => {
+    let cancelled = false
+
+    createTauriMeetingRepository().then(async (repository) => {
+      if (cancelled || !repository) return
+
+      setDesktopRepository(repository)
+      setStorageMode('desktop')
+
+      const savedMeeting = await repository.get('product-sync-alex')
+      if (!cancelled && savedMeeting) {
+        setMeeting(savedMeeting)
+      }
+    })
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
   useEffect(() => {
     meetingRepository.save(meeting)
-  }, [meeting, meetingRepository])
+    desktopRepository?.save(meeting).catch(() => {
+      setStorageMode('browser')
+    })
+  }, [desktopRepository, meeting, meetingRepository])
 
   useEffect(() => {
     setCopyStatus('idle')
+    setExportStatus('idle')
   }, [meeting.id, meeting.phase])
 
   return (
@@ -132,12 +180,18 @@ export function App() {
             onStopRecording={stopRecording}
             onRegenerate={regenerateAiNotes}
             onCopyMarkdown={copyMarkdown}
+            onSaveMarkdown={saveMarkdown}
             copyStatus={copyStatus}
+            exportStatus={exportStatus}
           />
         )}
         {route === 'library' && <LibraryPage meetings={meetings} onOpenMeeting={() => setRoute('meeting')} />}
         {route === 'settings' && (
-          <SettingsPage activePane={settingsPane} onSelectPane={setSettingsPane} />
+          <SettingsPage
+            activePane={settingsPane}
+            storageMode={storageMode}
+            onSelectPane={setSettingsPane}
+          />
         )}
       </main>
       <FloatingCapsule phase={meeting.phase} duration={meeting.duration} onStop={stopRecording} />
@@ -231,14 +285,18 @@ function MeetingPage({
   onStopRecording,
   onRegenerate,
   onCopyMarkdown,
+  onSaveMarkdown,
   copyStatus,
+  exportStatus,
 }: {
   meeting: Meeting
   view: ReturnType<typeof getMeetingViewModel>
   onStopRecording: () => void
   onRegenerate: () => void
   onCopyMarkdown: () => void
+  onSaveMarkdown: () => void
   copyStatus: 'idle' | 'copied' | 'ready'
+  exportStatus: 'idle' | 'saved' | 'downloaded' | 'unavailable' | 'error'
 }) {
   const contextPreview = buildAiNotesContext(meeting)
 
@@ -255,7 +313,9 @@ function MeetingPage({
             meeting={meeting}
             onRegenerate={onRegenerate}
             onCopyMarkdown={onCopyMarkdown}
+            onSaveMarkdown={onSaveMarkdown}
             copyStatus={copyStatus}
+            exportStatus={exportStatus}
             contextPreview={contextPreview}
           />
           <TranscriptPane title="Original Transcript" subtitle="Source for AI Notes" meeting={meeting} />
@@ -304,13 +364,17 @@ function AiNotesPane({
   meeting,
   onRegenerate,
   onCopyMarkdown,
+  onSaveMarkdown,
   copyStatus,
+  exportStatus,
   contextPreview,
 }: {
   meeting: Meeting
   onRegenerate: () => void
   onCopyMarkdown: () => void
+  onSaveMarkdown: () => void
   copyStatus: 'idle' | 'copied' | 'ready'
+  exportStatus: 'idle' | 'saved' | 'downloaded' | 'unavailable' | 'error'
   contextPreview: string
 }) {
   const notes = meeting.aiNotes
@@ -320,6 +384,16 @@ function AiNotesPane({
       : copyStatus === 'ready'
         ? 'Markdown Ready'
         : 'Copy Markdown'
+  const exportLabel =
+    exportStatus === 'saved'
+      ? 'Saved'
+      : exportStatus === 'downloaded'
+        ? 'Downloaded'
+        : exportStatus === 'unavailable'
+          ? 'Desktop Only'
+          : exportStatus === 'error'
+            ? 'Save Failed'
+            : 'Save Markdown'
 
   return (
     <div className="pane jelly-card ai-main">
@@ -382,7 +456,9 @@ function AiNotesPane({
         <button onClick={onCopyMarkdown} disabled={!notes}>
           {copyLabel}
         </button>
-        <button disabled={!notes}>Export</button>
+        <button onClick={onSaveMarkdown} disabled={!notes}>
+          {exportLabel}
+        </button>
       </div>
     </div>
   )
@@ -447,9 +523,11 @@ function LibraryPage({
 
 function SettingsPage({
   activePane,
+  storageMode,
   onSelectPane,
 }: {
   activePane: SettingsPane
+  storageMode: 'browser' | 'desktop'
   onSelectPane: (pane: SettingsPane) => void
 }) {
   return (
@@ -469,27 +547,97 @@ function SettingsPage({
       </aside>
       <div className="settings-pane">
         <div className="settings-title">{settingsItems.find((item) => item.id === activePane)?.label}</div>
-        <div className="settings-form">
-          <FieldGroup label="Capture mode">
-            <SegmentedControl left="Mic + System" right="Microphone Only" />
-          </FieldGroup>
-          <FieldGroup label="Meeting mode">
-            <SegmentedControl left="Focus First" right="Split View" />
-          </FieldGroup>
-          <FieldGroup label="Privacy">
-            <ToggleRow
-              title="Local notes"
-              description="Meetings stay on this device unless exported."
-            />
-            <ToggleRow
-              title="Hide transcript by default in Review"
-              description="AI Notes are primary; transcript stays as source."
-            />
-            <ToggleRow title="No public links" description="Sharing starts private." />
-          </FieldGroup>
-        </div>
+        <SettingsContent activePane={activePane} storageMode={storageMode} />
       </div>
     </section>
+  )
+}
+
+function SettingsContent({
+  activePane,
+  storageMode,
+}: {
+  activePane: SettingsPane
+  storageMode: 'browser' | 'desktop'
+}) {
+  if (activePane === 'audio') {
+    return (
+      <div className="settings-form">
+        <FieldGroup label="Capture source">
+          <SegmentedControl left="Mic + System" right="Microphone Only" />
+        </FieldGroup>
+        <FieldGroup label="System audio">
+          <ToggleRow title="ScreenCaptureKit" description="macOS system audio capture target." />
+          <ToggleRow title="Save raw audio" description="Off by default after transcription." checked={false} />
+        </FieldGroup>
+      </div>
+    )
+  }
+
+  if (activePane === 'ai') {
+    return (
+      <div className="settings-form">
+        <FieldGroup label="Provider">
+          <SegmentedControl left="OpenAI Compatible" right="Ollama" />
+        </FieldGroup>
+        <FieldGroup label="Connection">
+          <ReadonlyInput label="Base URL" value="https://api.openai.com/v1" />
+          <ReadonlyInput label="STT model" value="whisper-1" />
+          <ReadonlyInput label="Notes model" value="gpt-4.1-mini" />
+        </FieldGroup>
+        <FieldGroup label="Keys">
+          <ToggleRow title="Use OS keychain" description="API keys stay outside meeting records." />
+        </FieldGroup>
+      </div>
+    )
+  }
+
+  if (activePane === 'exports') {
+    return (
+      <div className="settings-form">
+        <FieldGroup label="Markdown">
+          <ReadonlyInput label="Default folder" value="Documents/OpenMinutes" />
+          <ToggleRow title="Include transcript" description="Off by default for exported AI Notes." checked={false} />
+        </FieldGroup>
+        <FieldGroup label="Integrations">
+          <ReadonlyInput label="Slack" value="Webhook placeholder" />
+          <ReadonlyInput label="Notion" value="Page export placeholder" />
+        </FieldGroup>
+      </div>
+    )
+  }
+
+  if (activePane === 'about') {
+    return (
+      <div className="settings-form">
+        <FieldGroup label="Build">
+          <ReadonlyInput label="Storage" value={storageMode === 'desktop' ? 'Tauri app data' : 'Browser storage'} />
+          <ReadonlyInput label="License" value="MIT" />
+        </FieldGroup>
+      </div>
+    )
+  }
+
+  return (
+    <div className="settings-form">
+      <FieldGroup label="Capture mode">
+        <SegmentedControl left="Mic + System" right="Microphone Only" />
+      </FieldGroup>
+      <FieldGroup label="Meeting mode">
+        <SegmentedControl left="Focus First" right="Split View" />
+      </FieldGroup>
+      <FieldGroup label="Privacy">
+        <ToggleRow
+          title="Local notes"
+          description="Meetings stay on this device unless exported."
+        />
+        <ToggleRow
+          title="Hide transcript by default in Review"
+          description="AI Notes are primary; transcript stays as source."
+        />
+        <ToggleRow title="No public links" description="Sharing starts private." />
+      </FieldGroup>
+    </div>
   )
 }
 
@@ -554,14 +702,31 @@ function SegmentedControl({ left, right }: { left: string; right: string }) {
   )
 }
 
-function ToggleRow({ title, description }: { title: string; description: string }) {
+function ReadonlyInput({ label, value }: { label: string; value: string }) {
+  return (
+    <label className="readonly-input">
+      <span>{label}</span>
+      <input value={value} readOnly />
+    </label>
+  )
+}
+
+function ToggleRow({
+  title,
+  description,
+  checked = true,
+}: {
+  title: string
+  description: string
+  checked?: boolean
+}) {
   return (
     <div className="toggle-row">
       <div className="toggle-copy">
         <strong>{title}</strong>
         <span>{description}</span>
       </div>
-      <div className="toggle" role="switch" aria-checked="true" />
+      <div className={`toggle ${checked ? '' : 'off'}`} role="switch" aria-checked={checked} />
     </div>
   )
 }
