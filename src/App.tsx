@@ -1129,6 +1129,9 @@ function SettingsContent({
   }
 
   if (activePane === 'ai') {
+    const usesProviderMode =
+      settings.transcriptionMode === 'provider' || settings.notesMode === 'provider'
+
     return (
       <div className="settings-form">
         <FieldGroup label="Provider">
@@ -1141,57 +1144,81 @@ function SettingsContent({
             }
           />
         </FieldGroup>
-        <FieldGroup label="Connection">
-          <SettingsInput
-            label="Base URL"
-            value={settings.aiBaseUrl}
-            onChange={(aiBaseUrl) => onUpdateSettings({ aiBaseUrl })}
-          />
-          <SettingsInput
-            label="STT model"
-            value={settings.sttModel}
-            onChange={(sttModel) => onUpdateSettings({ sttModel })}
-          />
-          <SettingsInput
-            label="Notes model"
-            value={settings.notesModel}
-            onChange={(notesModel) => onUpdateSettings({ notesModel })}
+        <FieldGroup label="Transcription">
+          <SegmentedControl
+            left="Provider STT"
+            right="Local Demo STT"
+            value={settings.transcriptionMode === 'provider' ? 'left' : 'right'}
+            onChange={(value) =>
+              onUpdateSettings({ transcriptionMode: value === 'left' ? 'provider' : 'local-demo' })
+            }
           />
         </FieldGroup>
-        <FieldGroup label="Keys">
-          <ToggleRow
-            title="Use OS keychain"
-            description="API keys stay outside meeting records."
-            checked={settings.useKeychain}
-            onToggle={() => onUpdateSettings({ useKeychain: !settings.useKeychain })}
+        <FieldGroup label="AI Notes">
+          <SegmentedControl
+            left="Provider LLM"
+            right="Local Demo Notes"
+            value={settings.notesMode === 'provider' ? 'left' : 'right'}
+            onChange={(value) =>
+              onUpdateSettings({ notesMode: value === 'left' ? 'provider' : 'local-demo' })
+            }
           />
-          <SettingsInput
-            label="API key"
-            type="password"
-            value={apiKeyDraft}
-            onChange={onApiKeyDraftChange}
-          />
-          <div className="key-actions">
-            <span className={`key-status ${apiKeyConfigured ? 'configured' : ''}`}>
-              {apiKeyConfigured ? 'Configured' : 'Not configured'}
-            </span>
-            <button className="settings-action" onClick={onSaveApiKey} disabled={apiKeyStatus === 'saving'}>
-              {apiKeyStatus === 'saving' ? 'Saving' : 'Save Key'}
-            </button>
-            <button
-              className="settings-action"
-              onClick={onDeleteApiKey}
-              disabled={!apiKeyConfigured || apiKeyStatus === 'saving'}
-            >
-              Delete Key
-            </button>
-          </div>
-          {apiKeyStatus === 'error' ? (
-            <p className="settings-error" role="alert">
-              {apiKeyError || 'Could not update API key.'}
-            </p>
-          ) : null}
         </FieldGroup>
+        {usesProviderMode ? (
+          <>
+            <FieldGroup label="Connection">
+              <SettingsInput
+                label="Base URL"
+                value={settings.aiBaseUrl}
+                onChange={(aiBaseUrl) => onUpdateSettings({ aiBaseUrl })}
+              />
+              <SettingsInput
+                label="STT model"
+                value={settings.sttModel}
+                onChange={(sttModel) => onUpdateSettings({ sttModel })}
+              />
+              <SettingsInput
+                label="Notes model"
+                value={settings.notesModel}
+                onChange={(notesModel) => onUpdateSettings({ notesModel })}
+              />
+            </FieldGroup>
+            <FieldGroup label="Keys">
+              <ToggleRow
+                title="Use OS keychain"
+                description="API keys stay outside meeting records."
+                checked={settings.useKeychain}
+                onToggle={() => onUpdateSettings({ useKeychain: !settings.useKeychain })}
+              />
+              <SettingsInput
+                label="API key"
+                type="password"
+                value={apiKeyDraft}
+                onChange={onApiKeyDraftChange}
+              />
+              <div className="key-actions">
+                <span className={`key-status ${apiKeyConfigured ? 'configured' : ''}`}>
+                  {apiKeyConfigured ? 'Configured' : 'Not configured'}
+                </span>
+                <button className="settings-action" onClick={onSaveApiKey} disabled={apiKeyStatus === 'saving'}>
+                  {apiKeyStatus === 'saving' ? 'Saving' : 'Save Key'}
+                </button>
+                <button
+                  className="settings-action"
+                  onClick={onDeleteApiKey}
+                  disabled={!apiKeyConfigured || apiKeyStatus === 'saving'}
+                >
+                  Delete Key
+                </button>
+              </div>
+              {apiKeyStatus === 'error' ? (
+                <p className="settings-error" role="alert">
+                  {apiKeyError || 'Could not update API key.'}
+                </p>
+              ) : null}
+            </FieldGroup>
+          </>
+        ) : null}
       </div>
     )
   }

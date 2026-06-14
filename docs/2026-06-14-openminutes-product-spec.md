@@ -1424,6 +1424,35 @@ Still intentionally not completed:
 3. Collapsible source highlights for very long meetings.
 4. Full transcript speaker merge/rename.
 
+### 15.16 Implementation Slice 12: Local Demo Provider Mode
+
+Completed in the twelfth push:
+
+1. Added explicit local demo run modes for:
+   - Transcription (`Provider STT` or `Local Demo STT`).
+   - AI Notes (`Provider LLM` or `Local Demo Notes`).
+2. Kept provider-backed STT/LLM as the default behavior.
+3. Wired `Local Demo STT` to the existing mock transcription boundary so imported audio can reach Review without an API key.
+4. Expanded mock transcription output from a single placeholder line to a short multi-line demo transcript that references the imported file name.
+5. Wired `Local Demo Notes` to the mock AI Notes provider so imported demo transcripts can generate Review content without provider keys.
+6. Added normalization for the new settings fields so old persisted settings safely fall back to provider mode.
+7. Added tests proving:
+   - Settings accept and reject local demo run modes correctly.
+   - Provider factories select mock providers in local demo mode.
+   - A user can enable local demo mode, import audio, see a transcript, and generate AI Notes without an API key.
+
+Product rule clarified:
+
+Demo mode must be explicit. The app should never silently replace a failed real STT/LLM request with mock content, because users need to know whether their transcript and notes came from a real provider or from local sample data.
+
+Still intentionally not completed:
+
+1. Native microphone capture.
+2. Native system audio capture.
+3. Streamed audio upload from Rust.
+4. Speaker merge/rename across the transcript.
+5. Rich source citations from AI Notes back to transcript lines.
+
 ## 16. Open Questions
 
 1. Final product name: OpenMinutes or another name?

@@ -1,6 +1,7 @@
 export type CaptureSource = 'mic-system' | 'microphone-only'
 export type MeetingPreference = 'focus-first' | 'split-view'
 export type AiProviderId = 'openai-compatible' | 'ollama'
+export type ProviderRunMode = 'provider' | 'local-demo'
 
 export interface AppSettings {
   captureSource: CaptureSource
@@ -10,6 +11,8 @@ export interface AppSettings {
   hideTranscriptByDefault: boolean
   noPublicLinks: boolean
   aiProvider: AiProviderId
+  transcriptionMode: ProviderRunMode
+  notesMode: ProviderRunMode
   aiBaseUrl: string
   sttModel: string
   notesModel: string
@@ -35,6 +38,8 @@ export const defaultAppSettings: AppSettings = {
   hideTranscriptByDefault: true,
   noPublicLinks: true,
   aiProvider: 'openai-compatible',
+  transcriptionMode: 'provider',
+  notesMode: 'provider',
   aiBaseUrl: 'https://api.openai.com/v1',
   sttModel: 'whisper-1',
   notesModel: 'gpt-4.1-mini',
@@ -91,6 +96,12 @@ export function normalizeAppSettings(value: unknown): AppSettings {
     ),
     noPublicLinks: booleanOrDefault(partial.noPublicLinks, defaultAppSettings.noPublicLinks),
     aiProvider: isAiProvider(partial.aiProvider) ? partial.aiProvider : defaultAppSettings.aiProvider,
+    transcriptionMode: isProviderRunMode(partial.transcriptionMode)
+      ? partial.transcriptionMode
+      : defaultAppSettings.transcriptionMode,
+    notesMode: isProviderRunMode(partial.notesMode)
+      ? partial.notesMode
+      : defaultAppSettings.notesMode,
     aiBaseUrl: stringOrDefault(partial.aiBaseUrl, defaultAppSettings.aiBaseUrl),
     sttModel: stringOrDefault(partial.sttModel, defaultAppSettings.sttModel),
     notesModel: stringOrDefault(partial.notesModel, defaultAppSettings.notesModel),
@@ -123,4 +134,8 @@ function isMeetingPreference(value: unknown): value is MeetingPreference {
 
 function isAiProvider(value: unknown): value is AiProviderId {
   return value === 'openai-compatible' || value === 'ollama'
+}
+
+function isProviderRunMode(value: unknown): value is ProviderRunMode {
+  return value === 'provider' || value === 'local-demo'
 }

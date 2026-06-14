@@ -56,12 +56,32 @@ export class MockTranscriptionProvider implements TranscriptionProvider {
   readonly label = 'Mock Transcription'
 
   async transcribe(input: AudioTranscriptionInput): Promise<TranscriptLine[]> {
+    const title = audioTitle(input.audioFileName ?? input.audioUri)
+
     return [
       {
         id: `${input.meetingId}-mock-1`,
         time: '00:04',
-        speaker: 'Speaker',
-        text: 'This is a mock transcript line for local development.',
+        speaker: 'Alex',
+        text: `This is a local demo transcript generated for ${title}.`,
+      },
+      {
+        id: `${input.meetingId}-mock-2`,
+        time: '00:28',
+        speaker: 'Tov',
+        text: 'It lets us validate the import, transcript review, and AI Notes flow without a provider key.',
+      },
+      {
+        id: `${input.meetingId}-mock-3`,
+        time: '00:54',
+        speaker: 'Alex',
+        text: 'Before using the notes externally, replace demo transcription with a real STT provider.',
+      },
+      {
+        id: `${input.meetingId}-mock-4`,
+        time: '01:18',
+        speaker: 'Tov',
+        text: 'The important product behavior is that imported audio lands in Review with editable source text.',
       },
     ]
   }
@@ -86,12 +106,25 @@ export class MockAiNotesProvider implements AiNotesProvider {
       .map((marker) => marker.text)
 
     return {
-      summary: `Generated from ${input.meeting.transcript.length} transcript lines and ${input.meeting.markers.length} markers.`,
-      decisions,
-      actionItems,
-      openQuestions,
-      keyPoints: [input.context.split('\n').find(Boolean) ?? input.meeting.title],
-      followUpDraft: `Follow up on ${input.meeting.title}.`,
+      summary: `Local demo notes for ${input.meeting.title}. Review the imported transcript, edit the source text, then switch to a real provider for production-quality notes.`,
+      decisions: decisions.length ? decisions : ['Use local demo mode only for product walkthroughs and offline testing.'],
+      actionItems: actionItems.length
+        ? actionItems
+        : [
+            {
+              id: 'mock-action-1',
+              text: 'Replace demo transcription with provider STT before sharing externally.',
+              owner: input.meeting.participants[0] ?? 'Owner',
+            },
+          ],
+      openQuestions: openQuestions.length
+        ? openQuestions
+        : ['Which real STT and AI Notes providers should this workspace use?'],
+      keyPoints: [
+        `${input.meeting.transcript.length} transcript lines are available as editable source text.`,
+        input.context.split('\n').find(Boolean) ?? input.meeting.title,
+      ],
+      followUpDraft: `Follow up on ${input.meeting.title}: the local demo flow is working, and the next step is to configure real provider keys for production use.`,
     }
   }
 }
@@ -101,4 +134,10 @@ export function createDefaultProviderRegistry(): ProviderRegistry {
     transcription: [new MockTranscriptionProvider()],
     aiNotes: [new MockAiNotesProvider()],
   }
+}
+
+function audioTitle(value: string): string {
+  const fileName = value.split(/[\\/]/).pop() ?? value
+  const withoutExtension = fileName.replace(/\.[^/.]+$/, '').trim()
+  return withoutExtension || 'imported audio'
 }

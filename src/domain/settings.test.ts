@@ -14,10 +14,24 @@ describe('normalizeAppSettings', () => {
       captureSource: 'bad',
       aiProvider: 'bad',
       meetingPreference: 'bad',
+      transcriptionMode: 'bad',
+      notesMode: 'bad',
     })
 
     expect(settings.captureSource).toBe(defaultAppSettings.captureSource)
     expect(settings.aiProvider).toBe(defaultAppSettings.aiProvider)
     expect(settings.meetingPreference).toBe(defaultAppSettings.meetingPreference)
+    expect(settings.transcriptionMode).toBe(defaultAppSettings.transcriptionMode)
+    expect(settings.notesMode).toBe(defaultAppSettings.notesMode)
+  })
+
+  it('normalizes local demo provider run modes', () => {
+    const settings = normalizeAppSettings({
+      transcriptionMode: 'local-demo',
+      notesMode: 'local-demo',
+    })
+
+    expect(settings.transcriptionMode).toBe('local-demo')
+    expect(settings.notesMode).toBe('local-demo')
   })
 })

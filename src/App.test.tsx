@@ -151,6 +151,29 @@ describe('App', () => {
     expect(screen.getByText(/customer-call/i)).toBeInTheDocument()
   })
 
+  it('imports audio and generates notes in local demo mode without provider keys', async () => {
+    const user = userEvent.setup()
+    const { container } = render(<App />)
+
+    await user.click(screen.getByRole('button', { name: /settings/i }))
+    await user.click(screen.getByRole('button', { name: /^ai$/i }))
+    await user.click(screen.getByRole('button', { name: /local demo stt/i }))
+    await user.click(screen.getByRole('button', { name: /local demo notes/i }))
+    expect(screen.queryByRole('textbox', { name: /base url/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('textbox', { name: /api key/i })).not.toBeInTheDocument()
+
+    const input = container.querySelector('input[type="file"]')
+    expect(input).toBeInstanceOf(HTMLInputElement)
+    await user.upload(input as HTMLInputElement, new File(['audio'], 'customer-call.wav', { type: 'audio/wav' }))
+
+    expect(await screen.findByDisplayValue(/local demo transcript generated for customer-call/i)).toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /^generate$/i }))
+
+    expect(await screen.findByDisplayValue(/local demo notes for customer-call/i)).toBeInTheDocument()
+  })
+
   it('uses edited original transcript lines in the AI generation context', async () => {
     const user = userEvent.setup()
     render(<App />)

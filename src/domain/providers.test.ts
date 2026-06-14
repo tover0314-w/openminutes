@@ -29,7 +29,9 @@ describe('provider abstractions', () => {
 
     expect(transcript[0]).toMatchObject({
       id: 'meeting-1-mock-1',
-      speaker: 'Speaker',
+      speaker: 'Alex',
+      text: 'This is a local demo transcript generated for mock.',
     })
+    expect(transcript).toHaveLength(4)
   })
 })

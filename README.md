@@ -25,6 +25,7 @@ Implemented foundation:
 - OS keychain-backed provider API key commands in the desktop shell.
 - OpenAI-compatible AI Notes provider adapter behind the provider boundary.
 - OpenAI-compatible STT provider adapter for imported audio files.
+- Explicit local demo modes for STT import and AI Notes generation without provider keys.
 - Editable AI Notes in Review, including key points and action item owners.
 - Editable original transcript source lines in Review.
 - Native desktop audio file picker with browser fallback for testing STT before native capture.
@@ -60,6 +61,14 @@ Settings keeps the OpenTypeless-compatible two-column desktop preference layout:
 AI provider keys are configured without displaying stored secrets:
 
 ![OpenMinutes AI Settings](output/playwright/openminutes-settings-ai-keychain.png)
+
+Local demo modes let audio import and AI Notes run without provider keys:
+
+![OpenMinutes Local Demo Mode Settings](output/playwright/openminutes-settings-local-demo-mode.png)
+
+Imported demo audio lands in Review with editable transcript source and generated notes:
+
+![OpenMinutes Local Demo Import Review](output/playwright/openminutes-local-demo-import-review.png)
 
 Provider errors preserve the existing AI Notes in Review:
 
