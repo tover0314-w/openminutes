@@ -19,6 +19,7 @@ Implemented foundation:
 
 - Meeting mode domain rules for Focus and Review.
 - SQLite-backed desktop meeting repository with browser fallback for development/tests.
+- SQLite-backed app settings for editable provider/export preferences.
 - Provider interfaces for transcription and AI Notes generation.
 - Mock STT and AI Notes providers for local development and tests.
 - Markdown formatting for AI Notes export.

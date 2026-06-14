@@ -1,7 +1,8 @@
-import { render, screen, within } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { App } from './App'
+import { APP_SETTINGS_STORAGE_KEY } from './domain/settings'
 
 describe('App', () => {
   it('shows Meeting as a single sidebar entry without a separate Focus nav item', () => {
@@ -47,6 +48,25 @@ describe('App', () => {
 
     await user.click(screen.getByRole('button', { name: /exports/i }))
     expect(screen.getByDisplayValue(/documents\/openminutes/i)).toBeInTheDocument()
+  })
+
+  it('persists editable settings through the browser settings repository', async () => {
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.click(screen.getByRole('button', { name: /settings/i }))
+    await user.click(screen.getByRole('button', { name: /^ai$/i }))
+    await user.click(screen.getByRole('button', { name: /ollama/i }))
+
+    const baseUrl = screen.getByRole('textbox', { name: /base url/i })
+    await user.clear(baseUrl)
+    await user.type(baseUrl, 'http://localhost:11434/v1')
+
+    await waitFor(() => {
+      const saved = JSON.parse(localStorage.getItem(APP_SETTINGS_STORAGE_KEY) ?? '{}')
+      expect(saved.aiProvider).toBe('ollama')
+      expect(saved.aiBaseUrl).toBe('http://localhost:11434/v1')
+    })
   })
 
   it('copies Review AI Notes as Markdown', async () => {

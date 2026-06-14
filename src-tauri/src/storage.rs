@@ -8,7 +8,8 @@ use std::{
 use tauri::{AppHandle, Manager};
 
 const DB_FILE_NAME: &str = "openminutes.sqlite3";
-const CURRENT_SCHEMA_VERSION: i64 = 1;
+const APP_SETTINGS_KEY: &str = "app_settings";
+const CURRENT_SCHEMA_VERSION: i64 = 2;
 
 pub fn database_file_path(app: &AppHandle) -> Result<PathBuf, String> {
     let app_dir = app
@@ -79,6 +80,44 @@ pub fn delete_meeting(path: &Path, id: &str) -> Result<(), String> {
     Ok(())
 }
 
+pub fn load_app_settings(path: &Path) -> Result<Option<Value>, String> {
+    let connection = open_database(path)?;
+    let raw = connection
+        .query_row(
+            "SELECT value_json FROM app_settings WHERE key = ?1",
+            params![APP_SETTINGS_KEY],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(|error| format!("Could not load app settings: {error}"))?;
+
+    match raw {
+        Some(raw) => serde_json::from_str::<Value>(&raw)
+            .map(Some)
+            .map_err(|error| format!("Could not parse app settings: {error}")),
+        None => Ok(None),
+    }
+}
+
+pub fn save_app_settings(path: &Path, settings: Value) -> Result<(), String> {
+    let connection = open_database(path)?;
+    let raw_json = serde_json::to_string(&settings)
+        .map_err(|error| format!("Could not serialize app settings: {error}"))?;
+
+    connection
+        .execute(
+            "INSERT INTO app_settings (key, value_json, updated_at)
+             VALUES (?1, ?2, ?3)
+             ON CONFLICT(key) DO UPDATE SET
+               value_json = excluded.value_json,
+               updated_at = excluded.updated_at",
+            params![APP_SETTINGS_KEY, raw_json, now_unix_seconds()],
+        )
+        .map_err(|error| format!("Could not save app settings: {error}"))?;
+
+    Ok(())
+}
+
 fn open_database(path: &Path) -> Result<Connection, String> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
@@ -129,9 +168,30 @@ fn run_migrations(connection: &Connection) -> Result<(), String> {
         connection
             .execute(
                 "INSERT OR REPLACE INTO schema_migrations (version, applied_at) VALUES (?1, ?2)",
-                params![CURRENT_SCHEMA_VERSION, now_unix_seconds()],
+                params![1, now_unix_seconds()],
             )
             .map_err(|error| format!("Could not record schema migration: {error}"))?;
+    }
+
+    if applied_version < 2 {
+        connection
+            .execute_batch(
+                "
+                CREATE TABLE IF NOT EXISTS app_settings (
+                  key TEXT PRIMARY KEY,
+                  value_json TEXT NOT NULL,
+                  updated_at TEXT NOT NULL
+                );
+                ",
+            )
+            .map_err(|error| format!("Could not apply app settings schema: {error}"))?;
+
+        connection
+            .execute(
+                "INSERT OR REPLACE INTO schema_migrations (version, applied_at) VALUES (?1, ?2)",
+                params![CURRENT_SCHEMA_VERSION, now_unix_seconds()],
+            )
+            .map_err(|error| format!("Could not record app settings migration: {error}"))?;
     }
 
     Ok(())
@@ -171,7 +231,9 @@ fn now_unix_seconds() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{delete_meeting, load_meetings, save_meeting};
+    use super::{
+        delete_meeting, load_app_settings, load_meetings, save_app_settings, save_meeting,
+    };
     use serde_json::json;
     use std::{
         fs,
@@ -221,6 +283,28 @@ mod tests {
         let error = save_meeting(&path, json!({ "title": "No id" })).unwrap_err();
 
         assert!(error.contains("missing a non-empty id"));
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn saves_and_loads_app_settings() {
+        let path = test_database_path("app-settings");
+
+        assert!(load_app_settings(&path).unwrap().is_none());
+
+        save_app_settings(
+            &path,
+            json!({
+                "aiProvider": "ollama",
+                "aiBaseUrl": "http://localhost:11434/v1"
+            }),
+        )
+        .unwrap();
+
+        let settings = load_app_settings(&path).unwrap().unwrap();
+        assert_eq!(settings["aiProvider"], "ollama");
+        assert_eq!(settings["aiBaseUrl"], "http://localhost:11434/v1");
+
         let _ = fs::remove_file(path);
     }
 

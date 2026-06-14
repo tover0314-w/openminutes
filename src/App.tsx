@@ -19,7 +19,14 @@ import {
 } from './domain/meeting'
 import { exportMarkdownFile } from './desktop/markdownExport'
 import { createTauriMeetingRepository } from './desktop/meetingRepository'
+import { createTauriAppSettingsRepository } from './desktop/settingsRepository'
 import { formatMeetingMarkdown } from './domain/markdown'
+import {
+  type AppSettings,
+  type AppSettingsRepository,
+  createBrowserAppSettingsRepository,
+  loadBrowserAppSettings,
+} from './domain/settings'
 import { type AsyncMeetingRepository, createDefaultMeetingRepository } from './domain/storage'
 
 type Route = 'today' | 'meeting' | 'library' | 'settings'
@@ -49,10 +56,14 @@ const routeTitles: Record<Route, string> = {
 
 export function App() {
   const meetingRepository = useMemo(() => createDefaultMeetingRepository(), [])
+  const browserSettingsRepository = useMemo(() => createBrowserAppSettingsRepository(), [])
   const [desktopRepository, setDesktopRepository] = useState<AsyncMeetingRepository | undefined>()
+  const [settingsRepository, setSettingsRepository] =
+    useState<AppSettingsRepository>(browserSettingsRepository)
   const [storageMode, setStorageMode] = useState<'browser' | 'desktop'>('browser')
   const [route, setRoute] = useState<Route>('today')
   const [settingsPane, setSettingsPane] = useState<SettingsPane>('general')
+  const [appSettings, setAppSettings] = useState<AppSettings>(() => loadBrowserAppSettings())
   const [meeting, setMeeting] = useState<Meeting>(
     () => meetingRepository.get('product-sync-alex') ?? createDemoMeeting('recording'),
   )
@@ -71,6 +82,10 @@ export function App() {
     ],
     [meeting],
   )
+
+  const updateSettings = (patch: Partial<AppSettings>) => {
+    setAppSettings((current) => ({ ...current, ...patch }))
+  }
 
   const startMeeting = () => {
     setMeeting(createDemoMeeting('recording'))
@@ -141,6 +156,17 @@ export function App() {
       }
     })
 
+    createTauriAppSettingsRepository().then(async (repository) => {
+      if (cancelled || !repository) return
+
+      const savedSettings = await repository.load()
+      if (cancelled) return
+
+      setAppSettings(savedSettings)
+      setSettingsRepository(repository)
+      setStorageMode('desktop')
+    })
+
     return () => {
       cancelled = true
     }
@@ -157,6 +183,12 @@ export function App() {
     setCopyStatus('idle')
     setExportStatus('idle')
   }, [meeting.id, meeting.phase])
+
+  useEffect(() => {
+    settingsRepository.save(appSettings).catch(() => {
+      setStorageMode('browser')
+    })
+  }, [appSettings, settingsRepository])
 
   return (
     <div className="app">
@@ -189,8 +221,10 @@ export function App() {
         {route === 'settings' && (
           <SettingsPage
             activePane={settingsPane}
+            settings={appSettings}
             storageMode={storageMode}
             onSelectPane={setSettingsPane}
+            onUpdateSettings={updateSettings}
           />
         )}
       </main>
@@ -523,12 +557,16 @@ function LibraryPage({
 
 function SettingsPage({
   activePane,
+  settings,
   storageMode,
   onSelectPane,
+  onUpdateSettings,
 }: {
   activePane: SettingsPane
+  settings: AppSettings
   storageMode: 'browser' | 'desktop'
   onSelectPane: (pane: SettingsPane) => void
+  onUpdateSettings: (patch: Partial<AppSettings>) => void
 }) {
   return (
     <section className="settings-layout" aria-label="Settings">
@@ -547,7 +585,12 @@ function SettingsPage({
       </aside>
       <div className="settings-pane">
         <div className="settings-title">{settingsItems.find((item) => item.id === activePane)?.label}</div>
-        <SettingsContent activePane={activePane} storageMode={storageMode} />
+        <SettingsContent
+          activePane={activePane}
+          settings={settings}
+          storageMode={storageMode}
+          onUpdateSettings={onUpdateSettings}
+        />
       </div>
     </section>
   )
@@ -555,20 +598,41 @@ function SettingsPage({
 
 function SettingsContent({
   activePane,
+  settings,
   storageMode,
+  onUpdateSettings,
 }: {
   activePane: SettingsPane
+  settings: AppSettings
   storageMode: 'browser' | 'desktop'
+  onUpdateSettings: (patch: Partial<AppSettings>) => void
 }) {
   if (activePane === 'audio') {
     return (
       <div className="settings-form">
         <FieldGroup label="Capture source">
-          <SegmentedControl left="Mic + System" right="Microphone Only" />
+          <SegmentedControl
+            left="Mic + System"
+            right="Microphone Only"
+            value={settings.captureSource === 'mic-system' ? 'left' : 'right'}
+            onChange={(value) =>
+              onUpdateSettings({ captureSource: value === 'left' ? 'mic-system' : 'microphone-only' })
+            }
+          />
         </FieldGroup>
         <FieldGroup label="System audio">
-          <ToggleRow title="ScreenCaptureKit" description="macOS system audio capture target." />
-          <ToggleRow title="Save raw audio" description="Off by default after transcription." checked={false} />
+          <ToggleRow
+            title="ScreenCaptureKit"
+            description="macOS system audio capture target."
+            checked={settings.systemAudioEnabled}
+            onToggle={() => onUpdateSettings({ systemAudioEnabled: !settings.systemAudioEnabled })}
+          />
+          <ToggleRow
+            title="Save raw audio"
+            description="Off by default after transcription."
+            checked={settings.saveRawAudio}
+            onToggle={() => onUpdateSettings({ saveRawAudio: !settings.saveRawAudio })}
+          />
         </FieldGroup>
       </div>
     )
@@ -578,15 +642,39 @@ function SettingsContent({
     return (
       <div className="settings-form">
         <FieldGroup label="Provider">
-          <SegmentedControl left="OpenAI Compatible" right="Ollama" />
+          <SegmentedControl
+            left="OpenAI Compatible"
+            right="Ollama"
+            value={settings.aiProvider === 'openai-compatible' ? 'left' : 'right'}
+            onChange={(value) =>
+              onUpdateSettings({ aiProvider: value === 'left' ? 'openai-compatible' : 'ollama' })
+            }
+          />
         </FieldGroup>
         <FieldGroup label="Connection">
-          <ReadonlyInput label="Base URL" value="https://api.openai.com/v1" />
-          <ReadonlyInput label="STT model" value="whisper-1" />
-          <ReadonlyInput label="Notes model" value="gpt-4.1-mini" />
+          <SettingsInput
+            label="Base URL"
+            value={settings.aiBaseUrl}
+            onChange={(aiBaseUrl) => onUpdateSettings({ aiBaseUrl })}
+          />
+          <SettingsInput
+            label="STT model"
+            value={settings.sttModel}
+            onChange={(sttModel) => onUpdateSettings({ sttModel })}
+          />
+          <SettingsInput
+            label="Notes model"
+            value={settings.notesModel}
+            onChange={(notesModel) => onUpdateSettings({ notesModel })}
+          />
         </FieldGroup>
         <FieldGroup label="Keys">
-          <ToggleRow title="Use OS keychain" description="API keys stay outside meeting records." />
+          <ToggleRow
+            title="Use OS keychain"
+            description="API keys stay outside meeting records."
+            checked={settings.useKeychain}
+            onToggle={() => onUpdateSettings({ useKeychain: !settings.useKeychain })}
+          />
         </FieldGroup>
       </div>
     )
@@ -596,12 +684,31 @@ function SettingsContent({
     return (
       <div className="settings-form">
         <FieldGroup label="Markdown">
-          <ReadonlyInput label="Default folder" value="Documents/OpenMinutes" />
-          <ToggleRow title="Include transcript" description="Off by default for exported AI Notes." checked={false} />
+          <SettingsInput
+            label="Default folder"
+            value={settings.exportFolder}
+            onChange={(exportFolder) => onUpdateSettings({ exportFolder })}
+          />
+          <ToggleRow
+            title="Include transcript"
+            description="Off by default for exported AI Notes."
+            checked={settings.includeTranscriptInExport}
+            onToggle={() =>
+              onUpdateSettings({ includeTranscriptInExport: !settings.includeTranscriptInExport })
+            }
+          />
         </FieldGroup>
         <FieldGroup label="Integrations">
-          <ReadonlyInput label="Slack" value="Webhook placeholder" />
-          <ReadonlyInput label="Notion" value="Page export placeholder" />
+          <SettingsInput
+            label="Slack"
+            value={settings.slackWebhookLabel}
+            onChange={(slackWebhookLabel) => onUpdateSettings({ slackWebhookLabel })}
+          />
+          <SettingsInput
+            label="Notion"
+            value={settings.notionExportLabel}
+            onChange={(notionExportLabel) => onUpdateSettings({ notionExportLabel })}
+          />
         </FieldGroup>
       </div>
     )
@@ -611,8 +718,12 @@ function SettingsContent({
     return (
       <div className="settings-form">
         <FieldGroup label="Build">
-          <ReadonlyInput label="Storage" value={storageMode === 'desktop' ? 'Tauri app data' : 'Browser storage'} />
-          <ReadonlyInput label="License" value="MIT" />
+          <SettingsInput
+            label="Storage"
+            value={storageMode === 'desktop' ? 'SQLite app data' : 'Browser storage'}
+            readOnly
+          />
+          <SettingsInput label="License" value="MIT" readOnly />
         </FieldGroup>
       </div>
     )
@@ -621,21 +732,43 @@ function SettingsContent({
   return (
     <div className="settings-form">
       <FieldGroup label="Capture mode">
-        <SegmentedControl left="Mic + System" right="Microphone Only" />
+        <SegmentedControl
+          left="Mic + System"
+          right="Microphone Only"
+          value={settings.captureSource === 'mic-system' ? 'left' : 'right'}
+          onChange={(value) =>
+            onUpdateSettings({ captureSource: value === 'left' ? 'mic-system' : 'microphone-only' })
+          }
+        />
       </FieldGroup>
       <FieldGroup label="Meeting mode">
-        <SegmentedControl left="Focus First" right="Split View" />
+        <SegmentedControl
+          left="Focus First"
+          right="Split View"
+          value={settings.meetingPreference === 'focus-first' ? 'left' : 'right'}
+          onChange={(value) =>
+            onUpdateSettings({ meetingPreference: value === 'left' ? 'focus-first' : 'split-view' })
+          }
+        />
       </FieldGroup>
       <FieldGroup label="Privacy">
         <ToggleRow
           title="Local notes"
           description="Meetings stay on this device unless exported."
+          checked
         />
         <ToggleRow
           title="Hide transcript by default in Review"
           description="AI Notes are primary; transcript stays as source."
+          checked={settings.hideTranscriptByDefault}
+          onToggle={() => onUpdateSettings({ hideTranscriptByDefault: !settings.hideTranscriptByDefault })}
         />
-        <ToggleRow title="No public links" description="Sharing starts private." />
+        <ToggleRow
+          title="No public links"
+          description="Sharing starts private."
+          checked={settings.noPublicLinks}
+          onToggle={() => onUpdateSettings({ noPublicLinks: !settings.noPublicLinks })}
+        />
       </FieldGroup>
     </div>
   )
@@ -693,20 +826,55 @@ function FieldGroup({ label, children }: { label: string; children: React.ReactN
   )
 }
 
-function SegmentedControl({ left, right }: { left: string; right: string }) {
+function SegmentedControl({
+  left,
+  right,
+  value = 'left',
+  onChange,
+}: {
+  left: string
+  right: string
+  value?: 'left' | 'right'
+  onChange?: (value: 'left' | 'right') => void
+}) {
   return (
     <div className="segmented">
-      <button className="active jelly-nav-active">{left}</button>
-      <button>{right}</button>
+      <button
+        className={value === 'left' ? 'active jelly-nav-active' : ''}
+        onClick={() => onChange?.('left')}
+      >
+        {left}
+      </button>
+      <button
+        className={value === 'right' ? 'active jelly-nav-active' : ''}
+        onClick={() => onChange?.('right')}
+      >
+        {right}
+      </button>
     </div>
   )
 }
 
-function ReadonlyInput({ label, value }: { label: string; value: string }) {
+function SettingsInput({
+  label,
+  value,
+  readOnly = false,
+  onChange,
+}: {
+  label: string
+  value: string
+  readOnly?: boolean
+  onChange?: (value: string) => void
+}) {
   return (
     <label className="readonly-input">
       <span>{label}</span>
-      <input value={value} readOnly />
+      <input
+        aria-label={label}
+        value={value}
+        readOnly={readOnly}
+        onChange={(event) => onChange?.(event.target.value)}
+      />
     </label>
   )
 }
@@ -715,10 +883,12 @@ function ToggleRow({
   title,
   description,
   checked = true,
+  onToggle,
 }: {
   title: string
   description: string
   checked?: boolean
+  onToggle?: () => void
 }) {
   return (
     <div className="toggle-row">
@@ -726,7 +896,14 @@ function ToggleRow({
         <strong>{title}</strong>
         <span>{description}</span>
       </div>
-      <div className={`toggle ${checked ? '' : 'off'}`} role="switch" aria-checked={checked} />
+      <button
+        className={`toggle ${checked ? '' : 'off'}`}
+        role="switch"
+        aria-checked={checked}
+        aria-label={title}
+        onClick={onToggle}
+        disabled={!onToggle}
+      />
     </div>
   )
 }

@@ -697,9 +697,15 @@ button {
 .toggle {
   width: 44px;
   height: 26px;
+  border: 0;
   border-radius: var(--radius-full);
   background: var(--color-text-secondary);
+  padding: 0;
   position: relative;
+}
+
+.toggle:disabled {
+  opacity: 1;
 }
 
 .toggle::after {

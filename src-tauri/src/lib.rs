@@ -35,6 +35,16 @@ fn delete_meeting(app: AppHandle, id: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn load_app_settings(app: AppHandle) -> Result<Option<Value>, String> {
+    storage::load_app_settings(&storage::database_file_path(&app)?)
+}
+
+#[tauri::command]
+fn save_app_settings(app: AppHandle, settings: Value) -> Result<(), String> {
+    storage::save_app_settings(&storage::database_file_path(&app)?, settings)
+}
+
+#[tauri::command]
 fn export_meeting_markdown(
     app: AppHandle,
     file_name: String,
@@ -65,6 +75,8 @@ pub fn run() {
             load_meetings,
             save_meeting,
             delete_meeting,
+            load_app_settings,
+            save_app_settings,
             export_meeting_markdown,
         ])
         .run(tauri::generate_context!())

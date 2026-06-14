@@ -1132,11 +1132,48 @@ The current SQLite schema stores indexed metadata plus full meeting `raw_json`. 
 
 Still intentionally not completed:
 
-1. Settings persistence.
-2. Keychain-backed provider secrets.
-3. Normalized meeting artifacts.
-4. Data migration from the previous `meetings.json` bridge file.
-5. Real provider calls.
+1. Keychain-backed provider secrets.
+2. Normalized meeting artifacts.
+3. Data migration from the previous `meetings.json` bridge file.
+4. Real provider calls.
+
+### 15.9 Implementation Slice 5: Persisted App Settings
+
+Completed in the fifth push:
+
+1. Added `AppSettings` domain model.
+2. Added browser settings fallback through localStorage for development and tests.
+3. Added Tauri settings repository wrapper.
+4. Added SQLite `app_settings` table through schema migration v2.
+5. Added Tauri commands:
+   - `load_app_settings`
+   - `save_app_settings`
+6. Made Settings panes editable:
+   - Capture source
+   - Meeting preference
+   - System audio toggles
+   - AI provider
+   - AI base URL
+   - STT model
+   - Notes model
+   - Markdown export folder
+   - Include transcript setting
+   - Slack/Notion placeholder labels
+7. Preserved API-key safety: settings do not store provider secrets.
+8. Added frontend tests for settings normalization, Tauri settings repository, and browser persistence.
+9. Added Rust tests for saving/loading app settings.
+
+Storage tradeoff:
+
+Settings are stored as a single JSON value in SQLite. This is acceptable for early desktop preferences because settings change as a whole and do not need query-level joins. Provider secrets remain out of scope until OS keychain support lands.
+
+Next recommended slice:
+
+1. Add OS keychain support for provider API keys.
+2. Add a first OpenAI-compatible provider adapter behind `AiNotesProvider`.
+3. Add request validation and redaction so API keys never enter logs or meeting records.
+4. Add settings UI for "key configured" without displaying the key.
+5. Add failure states for provider calls in Review.
 
 ## 16. Open Questions
 
