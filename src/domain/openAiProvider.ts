@@ -3,8 +3,14 @@ import {
   type ActionItem,
   type AiNotes,
   type Meeting,
+  type TranscriptLine,
 } from './meeting'
-import { type AiNotesGenerationInput, type AiNotesProvider } from './providers'
+import {
+  type AiNotesGenerationInput,
+  type AiNotesProvider,
+  type AudioTranscriptionInput,
+  type TranscriptionProvider,
+} from './providers'
 import { type AppSettings } from './settings'
 
 interface ChatCompletionResponse {
@@ -12,6 +18,15 @@ interface ChatCompletionResponse {
     message?: {
       content?: string
     }
+  }>
+}
+
+interface TranscriptionResponse {
+  text?: string
+  segments?: Array<{
+    id?: number
+    start?: number
+    text?: string
   }>
 }
 
@@ -33,17 +48,7 @@ export class OpenAICompatibleAiNotesProvider implements AiNotesProvider {
   ) {}
 
   async generateNotes(input: AiNotesGenerationInput): Promise<AiNotes> {
-    const apiKey = await this.apiKeys.load(this.settings.aiProvider)
-    if (this.settings.aiProvider === 'openai-compatible' && !apiKey) {
-      throw new MissingApiKeyError()
-    }
-
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-    }
-    if (apiKey) {
-      headers.Authorization = `Bearer ${apiKey}`
-    }
+    const headers = await buildProviderHeaders(this.settings, this.apiKeys, 'json')
 
     const response = await this.fetcher(`${normalizeBaseUrl(this.settings.aiBaseUrl)}/chat/completions`, {
       method: 'POST',
@@ -78,6 +83,44 @@ export class OpenAICompatibleAiNotesProvider implements AiNotesProvider {
   }
 }
 
+export class OpenAICompatibleTranscriptionProvider implements TranscriptionProvider {
+  readonly id = 'openai-compatible-transcription'
+  readonly label = 'OpenAI Compatible STT'
+
+  constructor(
+    private readonly settings: AppSettings,
+    private readonly apiKeys: ApiKeyRepository,
+    private readonly fetcher: typeof fetch = globalThis.fetch.bind(globalThis),
+  ) {}
+
+  async transcribe(input: AudioTranscriptionInput): Promise<TranscriptLine[]> {
+    if (!input.audioFile) {
+      throw new Error('Audio file is required for transcription import.')
+    }
+
+    const headers = await buildProviderHeaders(this.settings, this.apiKeys)
+    const formData = new FormData()
+    formData.append('file', input.audioFile, input.audioFileName ?? 'meeting-audio.webm')
+    formData.append('model', this.settings.sttModel)
+    formData.append('response_format', 'verbose_json')
+
+    const response = await this.fetcher(
+      `${normalizeBaseUrl(this.settings.aiBaseUrl)}/audio/transcriptions`,
+      {
+        method: 'POST',
+        headers,
+        body: formData,
+      },
+    )
+
+    if (!response.ok) {
+      throw new Error(`STT provider request failed with status ${response.status}.`)
+    }
+
+    return parseTranscriptionJson((await response.json()) as TranscriptionResponse, input.meetingId)
+  }
+}
+
 export function parseAiNotesJson(content: string): AiNotes {
   const parsed = JSON.parse(extractJson(content)) as Partial<AiNotes>
 
@@ -89,6 +132,36 @@ export function parseAiNotesJson(content: string): AiNotes {
     keyPoints: stringListOrEmpty(parsed.keyPoints),
     followUpDraft: stringOrDefault(parsed.followUpDraft, ''),
   }
+}
+
+export function parseTranscriptionJson(
+  response: TranscriptionResponse,
+  meetingId: string,
+): TranscriptLine[] {
+  const segments = Array.isArray(response.segments) ? response.segments : []
+
+  if (segments.length) {
+    return segments
+      .map((segment, index) => ({
+        id: `${meetingId}-stt-${segment.id ?? index + 1}`,
+        time: formatTimestamp(segment.start ?? 0),
+        speaker: 'Speaker',
+        text: typeof segment.text === 'string' ? segment.text.trim() : '',
+      }))
+      .filter((line) => line.text)
+  }
+
+  const text = typeof response.text === 'string' ? response.text.trim() : ''
+  if (!text) throw new Error('STT provider returned an empty transcript.')
+
+  return [
+    {
+      id: `${meetingId}-stt-1`,
+      time: '00:00',
+      speaker: 'Speaker',
+      text,
+    },
+  ]
 }
 
 function buildPrompt(meeting: Meeting, context: string): string {
@@ -103,8 +176,36 @@ function buildPrompt(meeting: Meeting, context: string): string {
   ].join('\n')
 }
 
+async function buildProviderHeaders(
+  settings: AppSettings,
+  apiKeys: ApiKeyRepository,
+  contentType?: 'json',
+): Promise<Record<string, string>> {
+  const apiKey = await apiKeys.load(settings.aiProvider)
+  if (settings.aiProvider === 'openai-compatible' && !apiKey) {
+    throw new MissingApiKeyError()
+  }
+
+  const headers: Record<string, string> = {}
+  if (contentType === 'json') {
+    headers['Content-Type'] = 'application/json'
+  }
+  if (apiKey) {
+    headers.Authorization = `Bearer ${apiKey}`
+  }
+
+  return headers
+}
+
 function normalizeBaseUrl(baseUrl: string): string {
   return baseUrl.replace(/\/+$/, '')
+}
+
+function formatTimestamp(seconds: number): string {
+  const safeSeconds = Math.max(0, Math.floor(seconds))
+  const minutes = Math.floor(safeSeconds / 60)
+  const remainingSeconds = safeSeconds % 60
+  return `${minutes.toString().padStart(2, '0')}:${remainingSeconds.toString().padStart(2, '0')}`
 }
 
 function extractJson(content: string): string {

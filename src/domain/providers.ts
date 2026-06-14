@@ -8,6 +8,8 @@ import {
 export interface AudioTranscriptionInput {
   meetingId: string
   audioUri: string
+  audioFile?: Blob
+  audioFileName?: string
   startedAt?: string
 }
 

@@ -101,6 +101,41 @@ describe('App', () => {
     expect(screen.getByText(/desktop-first meeting product/i)).toBeInTheDocument()
   })
 
+  it('copies edited Review AI Notes as Markdown', async () => {
+    const user = userEvent.setup()
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.defineProperty(globalThis.navigator, 'clipboard', {
+      value: { writeText },
+      configurable: true,
+    })
+
+    render(<App />)
+    const nav = screen.getByRole('navigation', { name: /main navigation/i })
+
+    await user.click(within(nav).getByRole('button', { name: /^meeting$/i }))
+    await user.click(screen.getByRole('button', { name: /stop recording from meeting/i }))
+
+    const summary = screen.getByRole('textbox', { name: /ai summary/i })
+    await user.clear(summary)
+    await user.type(summary, 'Edited customer-ready summary.')
+    await user.click(screen.getByRole('button', { name: /copy markdown/i }))
+
+    expect(writeText).toHaveBeenCalledWith(expect.stringContaining('Edited customer-ready summary.'))
+  })
+
+  it('shows a transcript import configuration error when an audio file is imported without a key', async () => {
+    const user = userEvent.setup()
+    const { container } = render(<App />)
+    const input = container.querySelector('input[type="file"]')
+
+    expect(input).toBeInstanceOf(HTMLInputElement)
+    await user.upload(input as HTMLInputElement, new File(['audio'], 'customer-call.wav', { type: 'audio/wav' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/api key is not configured/i)
+    expect(screen.getByRole('heading', { name: /meeting/i })).toBeInTheDocument()
+    expect(screen.getByText(/customer-call/i)).toBeInTheDocument()
+  })
+
   it('copies Review AI Notes as Markdown', async () => {
     const user = userEvent.setup()
     const writeText = vi.fn().mockResolvedValue(undefined)

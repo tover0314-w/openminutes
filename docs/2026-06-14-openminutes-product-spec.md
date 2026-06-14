@@ -769,7 +769,7 @@ The current implementation includes provider interfaces before real provider cal
 1. `TranscriptionProvider`
    - Input: meeting id, local audio URI, optional start timestamp.
    - Output: timestamped transcript lines.
-   - Current implementation: mock provider for local tests.
+   - Current implementation: mock provider for local tests plus an OpenAI-compatible audio transcription adapter for imported audio files.
 
 2. `AiNotesProvider`
    - Input: meeting object plus generation context.
@@ -1234,6 +1234,62 @@ Next recommended slice:
 3. Add audio-file import for testing STT before native capture.
 4. Add transcript finalization states and retry handling.
 5. Keep native audio capture as a separate macOS-specific slice.
+
+### 15.11 Implementation Slice 7: Editable Review and Audio Import STT Foundation
+
+Completed in the seventh push:
+
+1. Made Review AI Notes editable:
+   - Summary
+   - Decisions
+   - Action items
+   - Action item owner
+   - Open questions
+   - Key points
+   - Follow-up draft
+2. Added Key Points to the visible Review workspace.
+3. Wired Copy Markdown and Save Markdown to the edited meeting state.
+4. Added empty-list compaction so blank edited list items do not leak into exports.
+5. Added an audio file import entry from the existing top toolbar `Import` button.
+6. Added imported meeting state:
+   - `finalizing_transcript` while STT import is running.
+   - `needs_review` when transcript import succeeds.
+   - `error` when transcript import fails.
+7. Added `OpenAICompatibleTranscriptionProvider`.
+8. Added OpenAI-compatible `/audio/transcriptions` request support:
+   - Multipart body with audio file.
+   - Configured STT model.
+   - `verbose_json` response parsing.
+   - Timestamped transcript lines from segments.
+   - Text-only fallback response parsing.
+9. Added Review empty/error states for transcript import.
+10. Kept native audio capture out of this slice.
+
+Acceptance evidence:
+
+1. Frontend tests cover edited Summary copied into Markdown.
+2. Frontend tests cover audio import missing-key error state.
+3. Provider tests cover transcription upload request construction.
+4. Provider tests cover missing-key protection before upload.
+5. Provider tests cover text-only transcription fallback parsing.
+
+Still intentionally not completed:
+
+1. Native microphone recording.
+2. Native system audio recording.
+3. Native save/open file dialog.
+4. Streaming STT updates during live capture.
+5. Retry action for failed STT imports.
+6. Speaker diarization.
+7. Editing transcript source lines.
+
+Next recommended slice:
+
+1. Add retry affordances for failed transcript import and AI generation.
+2. Add editable transcript source lines.
+3. Add a native Tauri file picker instead of hidden web file input.
+4. Add a local mock audio import path for offline demos.
+5. Start the macOS microphone capture slice only after import/STT UX is stable.
 
 ## 16. Open Questions
 

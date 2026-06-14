@@ -24,6 +24,9 @@ Implemented foundation:
 - Mock STT and AI Notes providers for local development and tests.
 - OS keychain-backed provider API key commands in the desktop shell.
 - OpenAI-compatible AI Notes provider adapter behind the provider boundary.
+- OpenAI-compatible STT provider adapter for imported audio files.
+- Editable AI Notes in Review, including key points and action item owners.
+- Audio file import entry for testing STT before native capture.
 - Review generate/regenerate failure states that preserve existing AI Notes.
 - Markdown formatting for AI Notes export.
 - Copy Markdown action in the Review workspace.
@@ -54,6 +57,14 @@ AI provider keys are configured without displaying stored secrets:
 Provider errors preserve the existing AI Notes in Review:
 
 ![OpenMinutes Provider Error](output/playwright/openminutes-review-provider-error.png)
+
+Review AI Notes are editable before copy/export:
+
+![OpenMinutes Editable Review](output/playwright/openminutes-review-editable-ai-notes.png)
+
+Imported audio uses the STT provider path and surfaces configuration errors:
+
+![OpenMinutes Import Error](output/playwright/openminutes-import-transcript-error.png)
 
 ## Development
 

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { type ChangeEvent, useEffect, useMemo, useRef, useState } from 'react'
 import {
   BookOpen,
   CircleUser,
@@ -10,6 +10,7 @@ import {
   Square,
 } from 'lucide-react'
 import {
+  type ActionItem,
   type AiNotes,
   type Meeting,
   type MeetingPhase,
@@ -23,7 +24,11 @@ import { exportMarkdownFile } from './desktop/markdownExport'
 import { createTauriMeetingRepository } from './desktop/meetingRepository'
 import { createTauriAppSettingsRepository } from './desktop/settingsRepository'
 import { formatMeetingMarkdown } from './domain/markdown'
-import { createAiNotesProvider, isProviderConfigurationError } from './domain/providerFactory'
+import {
+  createAiNotesProvider,
+  createTranscriptionProvider,
+  isProviderConfigurationError,
+} from './domain/providerFactory'
 import { generateAiNotesForMeeting } from './domain/providers'
 import {
   type AppSettings,
@@ -36,6 +41,7 @@ import { type AsyncMeetingRepository, createDefaultMeetingRepository } from './d
 type Route = 'today' | 'meeting' | 'library' | 'settings'
 type SettingsPane = 'general' | 'audio' | 'ai' | 'exports' | 'about'
 type AiGenerationStatus = 'idle' | 'generating' | 'configuration_error' | 'error'
+type TranscriptionStatus = 'idle' | 'importing' | 'configuration_error' | 'error'
 type ApiKeyStatus = 'idle' | 'saving' | 'saved' | 'deleted' | 'error'
 
 const navItems = [
@@ -63,6 +69,7 @@ const routeTitles: Record<Route, string> = {
 export function App() {
   const meetingRepository = useMemo(() => createDefaultMeetingRepository(), [])
   const browserSettingsRepository = useMemo(() => createBrowserAppSettingsRepository(), [])
+  const audioImportInputRef = useRef<HTMLInputElement>(null)
   const [apiKeyRepository, setApiKeyRepository] = useState<ApiKeyRepository>(() =>
     createMemoryApiKeyRepository(),
   )
@@ -80,6 +87,8 @@ export function App() {
   const [exportStatus, setExportStatus] = useState<
     'idle' | 'saved' | 'downloaded' | 'unavailable' | 'error'
   >('idle')
+  const [transcriptionStatus, setTranscriptionStatus] = useState<TranscriptionStatus>('idle')
+  const [transcriptionError, setTranscriptionError] = useState('')
   const [aiGenerationStatus, setAiGenerationStatus] = useState<AiGenerationStatus>('idle')
   const [aiGenerationError, setAiGenerationError] = useState('')
   const [apiKeyConfigured, setApiKeyConfigured] = useState(false)
@@ -104,6 +113,10 @@ export function App() {
 
   const startMeeting = () => {
     setMeeting(createDemoMeeting('recording'))
+    setTranscriptionStatus('idle')
+    setTranscriptionError('')
+    setAiGenerationStatus('idle')
+    setAiGenerationError('')
     setRoute('meeting')
   }
 
@@ -112,9 +125,73 @@ export function App() {
       ...createDemoMeeting('ready'),
       manualNotes: current.manualNotes,
     }))
+    setTranscriptionStatus('idle')
+    setTranscriptionError('')
     setAiGenerationStatus('idle')
     setAiGenerationError('')
     setRoute('meeting')
+  }
+
+  const openAudioImport = () => {
+    audioImportInputRef.current?.click()
+  }
+
+  const importAudioFile = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+    if (!file) return
+
+    const meetingId = `import-${Date.now()}`
+    const importedMeeting: Meeting = {
+      ...createDemoMeeting('finalizing_transcript'),
+      id: meetingId,
+      title: audioTitleFromFileName(file.name),
+      duration: '00:00',
+      phase: 'finalizing_transcript',
+      manualNotes: '',
+      markers: [],
+      transcript: [],
+      aiNotes: undefined,
+    }
+
+    setRoute('meeting')
+    setMeeting(importedMeeting)
+    setTranscriptionStatus('importing')
+    setTranscriptionError('')
+    setAiGenerationStatus('idle')
+    setAiGenerationError('')
+
+    try {
+      const provider = createTranscriptionProvider(appSettings, apiKeyRepository)
+      const transcript = await provider.transcribe({
+        meetingId,
+        audioUri: file.name,
+        audioFile: file,
+        audioFileName: file.name,
+      })
+
+      setMeeting((current) =>
+        current.id === meetingId
+          ? {
+              ...current,
+              phase: 'needs_review',
+              transcript,
+            }
+          : current,
+      )
+      setTranscriptionStatus('idle')
+    } catch (error) {
+      setMeeting((current) =>
+        current.id === meetingId
+          ? {
+              ...current,
+              phase: 'error',
+            }
+          : current,
+      )
+      setTranscriptionStatus(isProviderConfigurationError(error) ? 'configuration_error' : 'error')
+      setTranscriptionError(errorMessage(error))
+    }
   }
 
   const regenerateAiNotes = async () => {
@@ -196,6 +273,13 @@ export function App() {
     } catch {
       setExportStatus('error')
     }
+  }
+
+  const updateAiNotes = (aiNotes: AiNotes) => {
+    setMeeting((current) => ({
+      ...current,
+      aiNotes,
+    }))
   }
 
   useEffect(() => {
@@ -285,7 +369,16 @@ export function App() {
         <header className="titlebar" data-tauri-drag-region>
           <h2>{routeTitles[route]}</h2>
           <div className="title-actions">
-            <button className="btn">Import</button>
+            <button className="btn" onClick={openAudioImport} disabled={transcriptionStatus === 'importing'}>
+              {transcriptionStatus === 'importing' ? 'Importing' : 'Import'}
+            </button>
+            <input
+              ref={audioImportInputRef}
+              type="file"
+              accept="audio/*,.m4a,.mp3,.mp4,.wav,.webm"
+              hidden
+              onChange={importAudioFile}
+            />
             <button className="btn btn-primary" onClick={startMeeting}>
               Start Meeting
             </button>
@@ -305,6 +398,9 @@ export function App() {
             exportStatus={exportStatus}
             aiGenerationStatus={aiGenerationStatus}
             aiGenerationError={aiGenerationError}
+            transcriptionStatus={transcriptionStatus}
+            transcriptionError={transcriptionError}
+            onUpdateAiNotes={updateAiNotes}
           />
         )}
         {route === 'library' && <LibraryPage meetings={meetings} onOpenMeeting={() => setRoute('meeting')} />}
@@ -421,6 +517,9 @@ function MeetingPage({
   exportStatus,
   aiGenerationStatus,
   aiGenerationError,
+  transcriptionStatus,
+  transcriptionError,
+  onUpdateAiNotes,
 }: {
   meeting: Meeting
   view: ReturnType<typeof getMeetingViewModel>
@@ -432,6 +531,9 @@ function MeetingPage({
   exportStatus: 'idle' | 'saved' | 'downloaded' | 'unavailable' | 'error'
   aiGenerationStatus: AiGenerationStatus
   aiGenerationError: string
+  transcriptionStatus: TranscriptionStatus
+  transcriptionError: string
+  onUpdateAiNotes: (aiNotes: AiNotes) => void
 }) {
   const contextPreview = buildAiNotesContext(meeting)
 
@@ -453,6 +555,9 @@ function MeetingPage({
             exportStatus={exportStatus}
             aiGenerationStatus={aiGenerationStatus}
             aiGenerationError={aiGenerationError}
+            transcriptionStatus={transcriptionStatus}
+            transcriptionError={transcriptionError}
+            onUpdateAiNotes={onUpdateAiNotes}
             contextPreview={contextPreview}
           />
           <TranscriptPane title="Original Transcript" subtitle="Source for AI Notes" meeting={meeting} />
@@ -506,6 +611,9 @@ function AiNotesPane({
   exportStatus,
   aiGenerationStatus,
   aiGenerationError,
+  transcriptionStatus,
+  transcriptionError,
+  onUpdateAiNotes,
   contextPreview,
 }: {
   meeting: Meeting
@@ -516,12 +624,18 @@ function AiNotesPane({
   exportStatus: 'idle' | 'saved' | 'downloaded' | 'unavailable' | 'error'
   aiGenerationStatus: AiGenerationStatus
   aiGenerationError: string
+  transcriptionStatus: TranscriptionStatus
+  transcriptionError: string
+  onUpdateAiNotes: (aiNotes: AiNotes) => void
   contextPreview: string
 }) {
   const notes = meeting.aiNotes
   const isGenerating = aiGenerationStatus === 'generating'
+  const isImportingTranscript = transcriptionStatus === 'importing'
   const generationFailed =
     aiGenerationStatus === 'configuration_error' || aiGenerationStatus === 'error'
+  const transcriptionFailed =
+    transcriptionStatus === 'configuration_error' || transcriptionStatus === 'error'
   const copyLabel =
     copyStatus === 'copied'
       ? 'Copied'
@@ -543,6 +657,18 @@ function AiNotesPane({
     aiGenerationStatus === 'configuration_error'
       ? 'API key is not configured. Add one in Settings > AI.'
       : aiGenerationError
+  const transcriptionErrorMessage =
+    transcriptionStatus === 'configuration_error'
+      ? 'API key is not configured. Add one in Settings > AI.'
+      : transcriptionError
+  const emptyTitle = isImportingTranscript ? 'Importing Audio' : 'Generate AI Notes'
+  const emptyCopy = isImportingTranscript
+    ? 'Transcription is running through the configured STT provider.'
+    : 'Use manual notes, markers, and finalized transcript to create the Review content.'
+  const updateNotes = (patch: Partial<AiNotes>) => {
+    if (!notes) return
+    onUpdateAiNotes({ ...notes, ...patch })
+  }
 
   return (
     <div className="pane jelly-card ai-main">
@@ -565,34 +691,42 @@ function AiNotesPane({
             </div>
           ) : null}
           <AiSection title="Summary">
-            <p>{notes.summary}</p>
+            <AiTextArea
+              label="AI summary"
+              value={notes.summary}
+              rows={3}
+              onChange={(summary) => updateNotes({ summary })}
+            />
           </AiSection>
-          <AiSection title="Decisions">
-            <ul>
-              {notes.decisions.map((decision) => (
-                <li key={decision}>{decision}</li>
-              ))}
-            </ul>
-          </AiSection>
-          <AiSection title="Action Items">
-            <ul>
-              {notes.actionItems.map((item) => (
-                <li key={item.id}>
-                  {item.text}
-                  {item.owner ? <span className="owner"> {item.owner}</span> : null}
-                </li>
-              ))}
-            </ul>
-          </AiSection>
-          <AiSection title="Open Questions">
-            <ul>
-              {notes.openQuestions.map((question) => (
-                <li key={question}>{question}</li>
-              ))}
-            </ul>
-          </AiSection>
+          <EditableStringListSection
+            title="Decisions"
+            itemLabel="Decision"
+            items={notes.decisions}
+            onChange={(decisions) => updateNotes({ decisions })}
+          />
+          <EditableActionItemsSection
+            items={notes.actionItems}
+            onChange={(actionItems) => updateNotes({ actionItems })}
+          />
+          <EditableStringListSection
+            title="Open Questions"
+            itemLabel="Open question"
+            items={notes.openQuestions}
+            onChange={(openQuestions) => updateNotes({ openQuestions })}
+          />
+          <EditableStringListSection
+            title="Key Points"
+            itemLabel="Key point"
+            items={notes.keyPoints}
+            onChange={(keyPoints) => updateNotes({ keyPoints })}
+          />
           <AiSection title="Follow-up Draft">
-            <p>{notes.followUpDraft}</p>
+            <AiTextArea
+              label="Follow-up draft"
+              value={notes.followUpDraft}
+              rows={4}
+              onChange={(followUpDraft) => updateNotes({ followUpDraft })}
+            />
           </AiSection>
           <details className="context-preview">
             <summary>Generation context</summary>
@@ -602,8 +736,14 @@ function AiNotesPane({
       ) : (
         <div className="empty-generation">
           <Sparkles size={22} />
-          <h3>Generate AI Notes</h3>
-          <p>Use manual notes, markers, and finalized transcript to create the Review content.</p>
+          <h3>{emptyTitle}</h3>
+          <p>{emptyCopy}</p>
+          {transcriptionFailed ? (
+            <div className="generation-alert" role="alert">
+              <strong>Transcript import failed.</strong>
+              <span>{transcriptionErrorMessage}</span>
+            </div>
+          ) : null}
           {generationFailed ? (
             <div className="generation-alert" role="alert">
               <strong>AI Notes were not generated.</strong>
@@ -613,7 +753,7 @@ function AiNotesPane({
         </div>
       )}
       <div className="marker-bar">
-        <button onClick={onRegenerate} disabled={isGenerating}>
+        <button onClick={onRegenerate} disabled={isGenerating || isImportingTranscript}>
           {regenerateLabel}
         </button>
         <button onClick={onCopyMarkdown} disabled={!notes}>
@@ -1002,6 +1142,137 @@ function AiSection({ title, children }: { title: string; children: React.ReactNo
   )
 }
 
+function AiTextArea({
+  label,
+  value,
+  rows = 2,
+  onChange,
+  onBlur,
+}: {
+  label: string
+  value: string
+  rows?: number
+  onChange: (value: string) => void
+  onBlur?: () => void
+}) {
+  return (
+    <textarea
+      className="ai-edit-field"
+      aria-label={label}
+      rows={rows}
+      value={value}
+      onChange={(event) => onChange(event.target.value)}
+      onBlur={onBlur}
+    />
+  )
+}
+
+function EditableStringListSection({
+  title,
+  itemLabel,
+  items,
+  onChange,
+}: {
+  title: string
+  itemLabel: string
+  items: string[]
+  onChange: (items: string[]) => void
+}) {
+  const visibleItems = items.length ? items : ['']
+
+  const updateItem = (index: number, value: string) => {
+    onChange(visibleItems.map((item, itemIndex) => (itemIndex === index ? value : item)))
+  }
+  const compactItems = () => {
+    onChange(visibleItems.map((item) => item.trim()).filter(Boolean))
+  }
+
+  return (
+    <AiSection title={title}>
+      <div className="editable-list">
+        {visibleItems.map((item, index) => (
+          <AiTextArea
+            key={`${itemLabel}-${index}`}
+            label={`${itemLabel} ${index + 1}`}
+            value={item}
+            rows={1}
+            onChange={(value) => updateItem(index, value)}
+            onBlur={compactItems}
+          />
+        ))}
+        <button className="inline-add" onClick={() => onChange([...items, ''])}>
+          Add
+        </button>
+      </div>
+    </AiSection>
+  )
+}
+
+function EditableActionItemsSection({
+  items,
+  onChange,
+}: {
+  items: ActionItem[]
+  onChange: (items: ActionItem[]) => void
+}) {
+  const visibleItems = items.length ? items : [{ id: 'a1', text: '' }]
+
+  const updateItem = (index: number, patch: Partial<ActionItem>) => {
+    onChange(
+      visibleItems.map((item, itemIndex) =>
+        itemIndex === index ? normalizeActionItem({ ...item, ...patch }, index) : item,
+      ),
+    )
+  }
+  const compactItems = () => {
+    onChange(
+      visibleItems
+        .map((item, index) => normalizeActionItem(item, index))
+        .filter((item) => item.text.trim()),
+    )
+  }
+
+  return (
+    <AiSection title="Action Items">
+      <div className="editable-list">
+        {visibleItems.map((item, index) => (
+          <div className="action-edit-row" key={item.id || `action-${index}`}>
+            <AiTextArea
+              label={`Action item ${index + 1}`}
+              value={item.text}
+              rows={2}
+              onChange={(text) => updateItem(index, { text })}
+              onBlur={compactItems}
+            />
+            <input
+              className="ai-edit-input"
+              aria-label={`Action owner ${index + 1}`}
+              value={item.owner ?? ''}
+              onChange={(event) => updateItem(index, { owner: event.target.value })}
+              onBlur={compactItems}
+            />
+          </div>
+        ))}
+        <button
+          className="inline-add"
+          onClick={() => onChange([...items, { id: `a${items.length + 1}`, text: '' }])}
+        >
+          Add
+        </button>
+      </div>
+    </AiSection>
+  )
+}
+
+function normalizeActionItem(item: ActionItem, index: number): ActionItem {
+  return {
+    id: item.id || `a${index + 1}`,
+    text: item.text,
+    owner: item.owner?.trim() ? item.owner : undefined,
+    due: item.due?.trim() ? item.due : undefined,
+  }
+}
+
 function StatusLabel({ phase, compact = false }: { phase: MeetingPhase; compact?: boolean }) {
   const label = statusLabel(phase, compact)
   return <span className={`status ${statusClass(phase)}`}>{label}</span>
@@ -1009,6 +1280,11 @@ function StatusLabel({ phase, compact = false }: { phase: MeetingPhase; compact?
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : 'Unknown error.'
+}
+
+function audioTitleFromFileName(fileName: string): string {
+  const withoutExtension = fileName.replace(/\.[^/.]+$/, '').trim()
+  return withoutExtension || 'Imported audio'
 }
 
 function FieldGroup({ label, children }: { label: string; children: React.ReactNode }) {
