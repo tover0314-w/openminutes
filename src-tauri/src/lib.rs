@@ -1,5 +1,6 @@
 mod storage;
 
+use keyring::{Entry, Error as KeyringError};
 use serde::Serialize;
 use serde_json::Value;
 use std::{
@@ -7,6 +8,8 @@ use std::{
     path::{Path, PathBuf},
 };
 use tauri::{AppHandle, Manager};
+
+const KEYCHAIN_SERVICE: &str = "OpenMinutes";
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -45,6 +48,44 @@ fn save_app_settings(app: AppHandle, settings: Value) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn has_provider_api_key(provider: String) -> Result<bool, String> {
+    match provider_key_entry(&provider)?.get_password() {
+        Ok(api_key) => Ok(!api_key.trim().is_empty()),
+        Err(KeyringError::NoEntry) => Ok(false),
+        Err(error) => Err(format!("Could not read API key status: {error}")),
+    }
+}
+
+#[tauri::command]
+fn load_provider_api_key(provider: String) -> Result<Option<String>, String> {
+    match provider_key_entry(&provider)?.get_password() {
+        Ok(api_key) => Ok(Some(api_key)),
+        Err(KeyringError::NoEntry) => Ok(None),
+        Err(error) => Err(format!("Could not load API key: {error}")),
+    }
+}
+
+#[tauri::command]
+fn save_provider_api_key(provider: String, api_key: String) -> Result<(), String> {
+    let trimmed_key = api_key.trim();
+    if trimmed_key.is_empty() {
+        return Err("API key cannot be empty".to_string());
+    }
+
+    provider_key_entry(&provider)?
+        .set_password(trimmed_key)
+        .map_err(|error| format!("Could not save API key: {error}"))
+}
+
+#[tauri::command]
+fn delete_provider_api_key(provider: String) -> Result<(), String> {
+    match provider_key_entry(&provider)?.delete_credential() {
+        Ok(()) | Err(KeyringError::NoEntry) => Ok(()),
+        Err(error) => Err(format!("Could not delete API key: {error}")),
+    }
+}
+
+#[tauri::command]
 fn export_meeting_markdown(
     app: AppHandle,
     file_name: String,
@@ -77,10 +118,34 @@ pub fn run() {
             delete_meeting,
             load_app_settings,
             save_app_settings,
+            has_provider_api_key,
+            load_provider_api_key,
+            save_provider_api_key,
+            delete_provider_api_key,
             export_meeting_markdown,
         ])
         .run(tauri::generate_context!())
         .expect("error while running OpenMinutes")
+}
+
+fn provider_key_entry(provider: &str) -> Result<Entry, String> {
+    Entry::new(KEYCHAIN_SERVICE, &provider_key_account(provider))
+        .map_err(|error| format!("Could not open keychain entry: {error}"))
+}
+
+fn provider_key_account(provider: &str) -> String {
+    let normalized = provider
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || character == '-' || character == '_' {
+                character
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+
+    format!("provider:{normalized}")
 }
 
 fn sanitize_file_stem(input: &str) -> String {
@@ -121,7 +186,7 @@ fn unique_markdown_path(export_dir: &Path, file_stem: &str) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use super::sanitize_file_stem;
+    use super::{provider_key_account, sanitize_file_stem};
 
     #[test]
     fn sanitizes_export_file_names() {
@@ -131,5 +196,17 @@ mod tests {
         );
         assert_eq!(sanitize_file_stem("产品会议"), "产品会议");
         assert_eq!(sanitize_file_stem(""), "meeting-notes");
+    }
+
+    #[test]
+    fn normalizes_keychain_provider_accounts() {
+        assert_eq!(
+            provider_key_account("openai-compatible"),
+            "provider:openai-compatible"
+        );
+        assert_eq!(
+            provider_key_account("bad/provider"),
+            "provider:bad_provider"
+        );
     }
 }

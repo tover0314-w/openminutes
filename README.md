@@ -22,6 +22,9 @@ Implemented foundation:
 - SQLite-backed app settings for editable provider/export preferences.
 - Provider interfaces for transcription and AI Notes generation.
 - Mock STT and AI Notes providers for local development and tests.
+- OS keychain-backed provider API key commands in the desktop shell.
+- OpenAI-compatible AI Notes provider adapter behind the provider boundary.
+- Review generate/regenerate failure states that preserve existing AI Notes.
 - Markdown formatting for AI Notes export.
 - Copy Markdown action in the Review workspace.
 - Save Markdown action for desktop exports to `Documents/OpenMinutes`.
@@ -43,6 +46,14 @@ Review turns the meeting into AI Notes, with the original transcript kept as sou
 Settings keeps the OpenTypeless-compatible two-column desktop preference layout:
 
 ![OpenMinutes Settings](output/playwright/openminutes-settings.png)
+
+AI provider keys are configured without displaying stored secrets:
+
+![OpenMinutes AI Settings](output/playwright/openminutes-settings-ai-keychain.png)
+
+Provider errors preserve the existing AI Notes in Review:
+
+![OpenMinutes Provider Error](output/playwright/openminutes-review-provider-error.png)
 
 ## Development
 
@@ -66,6 +77,7 @@ npm run tauri -- dev
 ```bash
 npm test -- --run
 npm run build
+cargo fmt --manifest-path src-tauri/Cargo.toml --check
 cargo check --manifest-path src-tauri/Cargo.toml
 cargo test --manifest-path src-tauri/Cargo.toml
 ```

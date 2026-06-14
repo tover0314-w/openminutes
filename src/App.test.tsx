@@ -69,6 +69,38 @@ describe('App', () => {
     })
   })
 
+  it('keeps provider API keys out of persisted app settings', async () => {
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.click(screen.getByRole('button', { name: /settings/i }))
+    await user.click(screen.getByRole('button', { name: /^ai$/i }))
+
+    const apiKeyInput = screen.getByLabelText(/api key/i)
+    await user.type(apiKeyInput, 'test-provider-secret')
+    await user.click(screen.getByRole('button', { name: /save key/i }))
+
+    await waitFor(() => {
+      expect(screen.getByText(/^configured$/i)).toBeInTheDocument()
+    })
+    expect(localStorage.getItem(APP_SETTINGS_STORAGE_KEY) ?? '').not.toContain('test-provider-secret')
+  })
+
+  it('shows a provider configuration error without clearing existing AI Notes', async () => {
+    const user = userEvent.setup()
+    render(<App />)
+    const nav = screen.getByRole('navigation', { name: /main navigation/i })
+
+    await user.click(within(nav).getByRole('button', { name: /^meeting$/i }))
+    await user.click(screen.getByRole('button', { name: /stop recording from meeting/i }))
+    expect(screen.getByText(/desktop-first meeting product/i)).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /regenerate/i }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/api key is not configured/i)
+    expect(screen.getByText(/desktop-first meeting product/i)).toBeInTheDocument()
+  })
+
   it('copies Review AI Notes as Markdown', async () => {
     const user = userEvent.setup()
     const writeText = vi.fn().mockResolvedValue(undefined)

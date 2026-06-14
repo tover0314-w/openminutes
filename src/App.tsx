@@ -17,10 +17,14 @@ import {
   createDemoMeeting,
   getMeetingViewModel,
 } from './domain/meeting'
+import { type ApiKeyRepository, createMemoryApiKeyRepository } from './domain/apiKey'
+import { createTauriApiKeyRepository } from './desktop/apiKeyRepository'
 import { exportMarkdownFile } from './desktop/markdownExport'
 import { createTauriMeetingRepository } from './desktop/meetingRepository'
 import { createTauriAppSettingsRepository } from './desktop/settingsRepository'
 import { formatMeetingMarkdown } from './domain/markdown'
+import { createAiNotesProvider, isProviderConfigurationError } from './domain/providerFactory'
+import { generateAiNotesForMeeting } from './domain/providers'
 import {
   type AppSettings,
   type AppSettingsRepository,
@@ -31,6 +35,8 @@ import { type AsyncMeetingRepository, createDefaultMeetingRepository } from './d
 
 type Route = 'today' | 'meeting' | 'library' | 'settings'
 type SettingsPane = 'general' | 'audio' | 'ai' | 'exports' | 'about'
+type AiGenerationStatus = 'idle' | 'generating' | 'configuration_error' | 'error'
+type ApiKeyStatus = 'idle' | 'saving' | 'saved' | 'deleted' | 'error'
 
 const navItems = [
   { id: 'today' as const, label: 'Today', icon: Home },
@@ -57,6 +63,9 @@ const routeTitles: Record<Route, string> = {
 export function App() {
   const meetingRepository = useMemo(() => createDefaultMeetingRepository(), [])
   const browserSettingsRepository = useMemo(() => createBrowserAppSettingsRepository(), [])
+  const [apiKeyRepository, setApiKeyRepository] = useState<ApiKeyRepository>(() =>
+    createMemoryApiKeyRepository(),
+  )
   const [desktopRepository, setDesktopRepository] = useState<AsyncMeetingRepository | undefined>()
   const [settingsRepository, setSettingsRepository] =
     useState<AppSettingsRepository>(browserSettingsRepository)
@@ -71,6 +80,12 @@ export function App() {
   const [exportStatus, setExportStatus] = useState<
     'idle' | 'saved' | 'downloaded' | 'unavailable' | 'error'
   >('idle')
+  const [aiGenerationStatus, setAiGenerationStatus] = useState<AiGenerationStatus>('idle')
+  const [aiGenerationError, setAiGenerationError] = useState('')
+  const [apiKeyConfigured, setApiKeyConfigured] = useState(false)
+  const [apiKeyDraft, setApiKeyDraft] = useState('')
+  const [apiKeyStatus, setApiKeyStatus] = useState<ApiKeyStatus>('idle')
+  const [apiKeyError, setApiKeyError] = useState('')
   const view = getMeetingViewModel(meeting)
 
   const meetings = useMemo(
@@ -97,14 +112,56 @@ export function App() {
       ...createDemoMeeting('ready'),
       manualNotes: current.manualNotes,
     }))
+    setAiGenerationStatus('idle')
+    setAiGenerationError('')
     setRoute('meeting')
   }
 
-  const regenerateAiNotes = () => {
-    setMeeting((current) => ({
-      ...createDemoMeeting('ready'),
-      manualNotes: current.manualNotes,
-    }))
+  const regenerateAiNotes = async () => {
+    setAiGenerationStatus('generating')
+    setAiGenerationError('')
+
+    try {
+      const provider = createAiNotesProvider(appSettings, apiKeyRepository)
+      const generatedMeeting = await generateAiNotesForMeeting(provider, meeting)
+      setMeeting(generatedMeeting)
+      setCopyStatus('idle')
+      setExportStatus('idle')
+      setAiGenerationStatus('idle')
+    } catch (error) {
+      setAiGenerationStatus(isProviderConfigurationError(error) ? 'configuration_error' : 'error')
+      setAiGenerationError(errorMessage(error))
+    }
+  }
+
+  const saveApiKey = async () => {
+    setApiKeyStatus('saving')
+    setApiKeyError('')
+
+    try {
+      await apiKeyRepository.save(appSettings.aiProvider, apiKeyDraft)
+      setApiKeyDraft('')
+      setApiKeyConfigured(true)
+      setApiKeyStatus('saved')
+    } catch (error) {
+      setApiKeyStatus('error')
+      setApiKeyError(errorMessage(error))
+    }
+  }
+
+  const deleteApiKey = async () => {
+    setApiKeyStatus('saving')
+    setApiKeyError('')
+
+    try {
+      await apiKeyRepository.delete(appSettings.aiProvider)
+      setApiKeyDraft('')
+      setApiKeyConfigured(false)
+      setApiKeyStatus('deleted')
+    } catch (error) {
+      setApiKeyStatus('error')
+      setApiKeyError(errorMessage(error))
+    }
   }
 
   const copyMarkdown = async () => {
@@ -167,6 +224,13 @@ export function App() {
       setStorageMode('desktop')
     })
 
+    createTauriApiKeyRepository().then((repository) => {
+      if (cancelled || !repository) return
+
+      setApiKeyRepository(repository)
+      setStorageMode('desktop')
+    })
+
     return () => {
       cancelled = true
     }
@@ -189,6 +253,30 @@ export function App() {
       setStorageMode('browser')
     })
   }, [appSettings, settingsRepository])
+
+  useEffect(() => {
+    let cancelled = false
+
+    setApiKeyDraft('')
+    setApiKeyStatus('idle')
+    setApiKeyError('')
+
+    apiKeyRepository
+      .has(appSettings.aiProvider)
+      .then((configured) => {
+        if (!cancelled) setApiKeyConfigured(configured)
+      })
+      .catch((error) => {
+        if (cancelled) return
+        setApiKeyConfigured(false)
+        setApiKeyStatus('error')
+        setApiKeyError(errorMessage(error))
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [apiKeyRepository, appSettings.aiProvider])
 
   return (
     <div className="app">
@@ -215,6 +303,8 @@ export function App() {
             onSaveMarkdown={saveMarkdown}
             copyStatus={copyStatus}
             exportStatus={exportStatus}
+            aiGenerationStatus={aiGenerationStatus}
+            aiGenerationError={aiGenerationError}
           />
         )}
         {route === 'library' && <LibraryPage meetings={meetings} onOpenMeeting={() => setRoute('meeting')} />}
@@ -225,6 +315,13 @@ export function App() {
             storageMode={storageMode}
             onSelectPane={setSettingsPane}
             onUpdateSettings={updateSettings}
+            apiKeyConfigured={apiKeyConfigured}
+            apiKeyDraft={apiKeyDraft}
+            apiKeyStatus={apiKeyStatus}
+            apiKeyError={apiKeyError}
+            onApiKeyDraftChange={setApiKeyDraft}
+            onSaveApiKey={saveApiKey}
+            onDeleteApiKey={deleteApiKey}
           />
         )}
       </main>
@@ -322,15 +419,19 @@ function MeetingPage({
   onSaveMarkdown,
   copyStatus,
   exportStatus,
+  aiGenerationStatus,
+  aiGenerationError,
 }: {
   meeting: Meeting
   view: ReturnType<typeof getMeetingViewModel>
   onStopRecording: () => void
-  onRegenerate: () => void
+  onRegenerate: () => void | Promise<void>
   onCopyMarkdown: () => void
   onSaveMarkdown: () => void
   copyStatus: 'idle' | 'copied' | 'ready'
   exportStatus: 'idle' | 'saved' | 'downloaded' | 'unavailable' | 'error'
+  aiGenerationStatus: AiGenerationStatus
+  aiGenerationError: string
 }) {
   const contextPreview = buildAiNotesContext(meeting)
 
@@ -350,6 +451,8 @@ function MeetingPage({
             onSaveMarkdown={onSaveMarkdown}
             copyStatus={copyStatus}
             exportStatus={exportStatus}
+            aiGenerationStatus={aiGenerationStatus}
+            aiGenerationError={aiGenerationError}
             contextPreview={contextPreview}
           />
           <TranscriptPane title="Original Transcript" subtitle="Source for AI Notes" meeting={meeting} />
@@ -401,17 +504,24 @@ function AiNotesPane({
   onSaveMarkdown,
   copyStatus,
   exportStatus,
+  aiGenerationStatus,
+  aiGenerationError,
   contextPreview,
 }: {
   meeting: Meeting
-  onRegenerate: () => void
+  onRegenerate: () => void | Promise<void>
   onCopyMarkdown: () => void
   onSaveMarkdown: () => void
   copyStatus: 'idle' | 'copied' | 'ready'
   exportStatus: 'idle' | 'saved' | 'downloaded' | 'unavailable' | 'error'
+  aiGenerationStatus: AiGenerationStatus
+  aiGenerationError: string
   contextPreview: string
 }) {
   const notes = meeting.aiNotes
+  const isGenerating = aiGenerationStatus === 'generating'
+  const generationFailed =
+    aiGenerationStatus === 'configuration_error' || aiGenerationStatus === 'error'
   const copyLabel =
     copyStatus === 'copied'
       ? 'Copied'
@@ -428,6 +538,11 @@ function AiNotesPane({
           : exportStatus === 'error'
             ? 'Save Failed'
             : 'Save Markdown'
+  const regenerateLabel = isGenerating ? 'Generating...' : notes ? 'Regenerate' : 'Generate'
+  const generationErrorMessage =
+    aiGenerationStatus === 'configuration_error'
+      ? 'API key is not configured. Add one in Settings > AI.'
+      : aiGenerationError
 
   return (
     <div className="pane jelly-card ai-main">
@@ -443,6 +558,12 @@ function AiNotesPane({
       />
       {notes ? (
         <div className="ai-notes" aria-label="AI Notes">
+          {generationFailed ? (
+            <div className="generation-alert" role="alert">
+              <strong>AI Notes were not updated.</strong>
+              <span>{generationErrorMessage}</span>
+            </div>
+          ) : null}
           <AiSection title="Summary">
             <p>{notes.summary}</p>
           </AiSection>
@@ -483,10 +604,18 @@ function AiNotesPane({
           <Sparkles size={22} />
           <h3>Generate AI Notes</h3>
           <p>Use manual notes, markers, and finalized transcript to create the Review content.</p>
+          {generationFailed ? (
+            <div className="generation-alert" role="alert">
+              <strong>AI Notes were not generated.</strong>
+              <span>{generationErrorMessage}</span>
+            </div>
+          ) : null}
         </div>
       )}
       <div className="marker-bar">
-        <button onClick={onRegenerate}>Regenerate</button>
+        <button onClick={onRegenerate} disabled={isGenerating}>
+          {regenerateLabel}
+        </button>
         <button onClick={onCopyMarkdown} disabled={!notes}>
           {copyLabel}
         </button>
@@ -561,12 +690,26 @@ function SettingsPage({
   storageMode,
   onSelectPane,
   onUpdateSettings,
+  apiKeyConfigured,
+  apiKeyDraft,
+  apiKeyStatus,
+  apiKeyError,
+  onApiKeyDraftChange,
+  onSaveApiKey,
+  onDeleteApiKey,
 }: {
   activePane: SettingsPane
   settings: AppSettings
   storageMode: 'browser' | 'desktop'
   onSelectPane: (pane: SettingsPane) => void
   onUpdateSettings: (patch: Partial<AppSettings>) => void
+  apiKeyConfigured: boolean
+  apiKeyDraft: string
+  apiKeyStatus: ApiKeyStatus
+  apiKeyError: string
+  onApiKeyDraftChange: (value: string) => void
+  onSaveApiKey: () => void | Promise<void>
+  onDeleteApiKey: () => void | Promise<void>
 }) {
   return (
     <section className="settings-layout" aria-label="Settings">
@@ -590,6 +733,13 @@ function SettingsPage({
           settings={settings}
           storageMode={storageMode}
           onUpdateSettings={onUpdateSettings}
+          apiKeyConfigured={apiKeyConfigured}
+          apiKeyDraft={apiKeyDraft}
+          apiKeyStatus={apiKeyStatus}
+          apiKeyError={apiKeyError}
+          onApiKeyDraftChange={onApiKeyDraftChange}
+          onSaveApiKey={onSaveApiKey}
+          onDeleteApiKey={onDeleteApiKey}
         />
       </div>
     </section>
@@ -601,11 +751,25 @@ function SettingsContent({
   settings,
   storageMode,
   onUpdateSettings,
+  apiKeyConfigured,
+  apiKeyDraft,
+  apiKeyStatus,
+  apiKeyError,
+  onApiKeyDraftChange,
+  onSaveApiKey,
+  onDeleteApiKey,
 }: {
   activePane: SettingsPane
   settings: AppSettings
   storageMode: 'browser' | 'desktop'
   onUpdateSettings: (patch: Partial<AppSettings>) => void
+  apiKeyConfigured: boolean
+  apiKeyDraft: string
+  apiKeyStatus: ApiKeyStatus
+  apiKeyError: string
+  onApiKeyDraftChange: (value: string) => void
+  onSaveApiKey: () => void | Promise<void>
+  onDeleteApiKey: () => void | Promise<void>
 }) {
   if (activePane === 'audio') {
     return (
@@ -675,6 +839,32 @@ function SettingsContent({
             checked={settings.useKeychain}
             onToggle={() => onUpdateSettings({ useKeychain: !settings.useKeychain })}
           />
+          <SettingsInput
+            label="API key"
+            type="password"
+            value={apiKeyDraft}
+            onChange={onApiKeyDraftChange}
+          />
+          <div className="key-actions">
+            <span className={`key-status ${apiKeyConfigured ? 'configured' : ''}`}>
+              {apiKeyConfigured ? 'Configured' : 'Not configured'}
+            </span>
+            <button className="settings-action" onClick={onSaveApiKey} disabled={apiKeyStatus === 'saving'}>
+              {apiKeyStatus === 'saving' ? 'Saving' : 'Save Key'}
+            </button>
+            <button
+              className="settings-action"
+              onClick={onDeleteApiKey}
+              disabled={!apiKeyConfigured || apiKeyStatus === 'saving'}
+            >
+              Delete Key
+            </button>
+          </div>
+          {apiKeyStatus === 'error' ? (
+            <p className="settings-error" role="alert">
+              {apiKeyError || 'Could not update API key.'}
+            </p>
+          ) : null}
         </FieldGroup>
       </div>
     )
@@ -817,6 +1007,10 @@ function StatusLabel({ phase, compact = false }: { phase: MeetingPhase; compact?
   return <span className={`status ${statusClass(phase)}`}>{label}</span>
 }
 
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : 'Unknown error.'
+}
+
 function FieldGroup({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="field-group">
@@ -858,11 +1052,13 @@ function SegmentedControl({
 function SettingsInput({
   label,
   value,
+  type = 'text',
   readOnly = false,
   onChange,
 }: {
   label: string
   value: string
+  type?: 'text' | 'password'
   readOnly?: boolean
   onChange?: (value: string) => void
 }) {
@@ -871,6 +1067,7 @@ function SettingsInput({
       <span>{label}</span>
       <input
         aria-label={label}
+        type={type}
         value={value}
         readOnly={readOnly}
         onChange={(event) => onChange?.(event.target.value)}

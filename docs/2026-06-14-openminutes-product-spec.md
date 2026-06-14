@@ -774,7 +774,7 @@ The current implementation includes provider interfaces before real provider cal
 2. `AiNotesProvider`
    - Input: meeting object plus generation context.
    - Output: structured AI Notes.
-   - Current implementation: mock provider based on markers and transcript length.
+   - Current implementation: mock provider for local tests plus an OpenAI-compatible chat completions adapter.
 
 Rules:
 
@@ -1174,6 +1174,66 @@ Next recommended slice:
 3. Add request validation and redaction so API keys never enter logs or meeting records.
 4. Add settings UI for "key configured" without displaying the key.
 5. Add failure states for provider calls in Review.
+
+### 15.10 Implementation Slice 6: Keychain and OpenAI-Compatible AI Notes
+
+Completed in the sixth push:
+
+1. Added `keyring` to the Tauri shell.
+2. Added provider API key Tauri commands:
+   - `has_provider_api_key`
+   - `load_provider_api_key`
+   - `save_provider_api_key`
+   - `delete_provider_api_key`
+3. Added a frontend `ApiKeyRepository` boundary.
+4. Added a browser/test memory API key repository.
+5. Added a Tauri API key repository wrapper.
+6. Added a provider factory so UI code depends on the provider boundary rather than a concrete adapter.
+7. Added Settings > AI key management:
+   - Password input for a new key.
+   - `Configured` / `Not configured` status.
+   - Save and delete actions.
+   - Saved keys are never displayed back into the input.
+8. Added `OpenAICompatibleAiNotesProvider`.
+9. Wired Review's Generate/Regenerate action to the provider boundary.
+10. Added provider failure states:
+   - Missing API key.
+   - Provider request error.
+   - Invalid or empty provider response.
+11. Preserved previous AI Notes when regeneration fails.
+12. Added tests for:
+   - Tauri key command delegation.
+   - API key safety outside persisted app settings.
+   - Missing-key Review error state.
+   - OpenAI-compatible request construction and response parsing.
+   - Ollama/local provider calls without an Authorization header.
+
+Security and privacy decisions:
+
+1. Provider API keys are not stored in `AppSettings`.
+2. Provider API keys are not stored in meeting records.
+3. Desktop runtime stores provider keys through OS keychain commands.
+4. Browser development and tests use memory-only key storage.
+5. The Settings UI shows only key status, never the stored secret.
+
+Still intentionally not completed:
+
+1. Real microphone capture.
+2. Real system audio capture.
+3. Real STT upload/transcription flow.
+4. Streaming transcript updates from audio capture.
+5. Editing generated AI Notes.
+6. Native save-location picker.
+7. Slack/Notion export adapters.
+8. Normalized SQLite tables for transcript lines, markers, and AI output.
+
+Next recommended slice:
+
+1. Add editable AI Notes fields in Review.
+2. Add a first STT provider adapter behind `TranscriptionProvider`.
+3. Add audio-file import for testing STT before native capture.
+4. Add transcript finalization states and retry handling.
+5. Keep native audio capture as a separate macOS-specific slice.
 
 ## 16. Open Questions
 
