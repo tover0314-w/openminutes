@@ -31,6 +31,7 @@ Implemented foundation:
 - Native desktop audio file picker with browser fallback for testing STT before native capture.
 - Retry affordance for failed audio import/STT setup.
 - Add/delete controls for original transcript source lines.
+- Speaker rename/merge controls for original transcript source lines.
 - Review generate/regenerate failure states that preserve existing AI Notes.
 - Markdown formatting for AI Notes export.
 - Copy Markdown action in the Review workspace.
@@ -89,6 +90,10 @@ Original transcript lines are editable in Review:
 Transcript source lines can be added or removed during Review:
 
 ![OpenMinutes Transcript Line Controls](output/playwright/openminutes-transcript-line-controls.png)
+
+Speaker labels can be renamed or merged across the transcript before regenerating notes:
+
+![OpenMinutes Speaker Rename Tools](output/playwright/openminutes-speaker-rename-tools.png)
 
 Failed audio imports can be retried after configuration is fixed:
 

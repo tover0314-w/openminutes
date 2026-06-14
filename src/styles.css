@@ -801,14 +801,19 @@ button {
 .transcript-actions {
   min-height: 42px;
   border-top: 1px solid var(--color-border);
-  display: flex;
-  align-items: center;
+  display: grid;
+  grid-template-columns: auto auto;
+  align-items: start;
+  justify-content: start;
+  gap: 8px;
   padding: 7px 16px;
   position: relative;
   z-index: 2;
 }
 
-.transcript-actions button {
+.transcript-actions button,
+.speaker-tools summary,
+.speaker-rename-row button {
   min-height: 28px;
   border: 0;
   border-radius: var(--radius-full);
@@ -816,6 +821,73 @@ button {
   color: var(--color-text-secondary);
   padding: 0 10px;
   font-size: 12px;
+}
+
+.speaker-tools {
+  width: max-content;
+  min-width: 0;
+}
+
+.speaker-tools[open] {
+  grid-column: 1 / -1;
+  width: 100%;
+}
+
+.speaker-tools summary {
+  list-style: none;
+  display: inline-flex;
+  align-items: center;
+}
+
+.speaker-tools summary::-webkit-details-marker {
+  display: none;
+}
+
+.speaker-rename-list {
+  position: relative;
+  z-index: 30;
+  width: 100%;
+  margin-top: 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.28);
+  padding: 8px;
+  display: grid;
+  gap: 6px;
+}
+
+.speaker-rename-row {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 58px minmax(0, 1fr) auto;
+  gap: 6px;
+  align-items: center;
+}
+
+.speaker-rename-row span {
+  min-width: 0;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.speaker-rename-row input {
+  min-width: 0;
+  height: 28px;
+  border: 0;
+  outline: 0;
+  border-radius: var(--radius-full);
+  background: var(--color-bg-secondary);
+  color: var(--color-text-primary);
+  padding: 0 9px;
+  font-size: 12px;
+}
+
+.speaker-rename-row button:disabled {
+  color: var(--color-text-tertiary);
+  opacity: 0.62;
 }
 
 .meeting-list {
@@ -1106,6 +1178,12 @@ button {
   gap: 9px;
   font-size: 12px;
   box-shadow: var(--shadow-float);
+}
+
+@media (min-width: 960px) {
+  .floating-capsule {
+    right: 360px;
+  }
 }
 
 .floating-capsule.ready {

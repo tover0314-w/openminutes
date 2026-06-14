@@ -908,6 +908,9 @@ function TranscriptPane({
   editable?: boolean
   onUpdateTranscript?: (transcript: TranscriptLine[]) => void
 }) {
+  const [speakerDrafts, setSpeakerDrafts] = useState<Record<string, string>>({})
+  const speakers = uniqueTranscriptSpeakers(meeting.transcript)
+
   const updateLine = (index: number, patch: Partial<TranscriptLine>) => {
     onUpdateTranscript?.(
       meeting.transcript.map((line, lineIndex) =>
@@ -929,6 +932,24 @@ function TranscriptPane({
   }
   const deleteLine = (index: number) => {
     onUpdateTranscript?.(meeting.transcript.filter((_, lineIndex) => lineIndex !== index))
+  }
+  const updateSpeakerDraft = (speaker: string, value: string) => {
+    setSpeakerDrafts((current) => ({ ...current, [speaker]: value }))
+  }
+  const renameSpeaker = (speaker: string) => {
+    const nextSpeaker = normalizeSpeakerName(speakerDrafts[speaker] ?? speaker)
+    if (!nextSpeaker || nextSpeaker === speaker) return
+
+    onUpdateTranscript?.(
+      meeting.transcript.map((line) =>
+        normalizeSpeakerName(line.speaker) === speaker ? { ...line, speaker: nextSpeaker } : line,
+      ),
+    )
+    setSpeakerDrafts((current) => {
+      const next = { ...current }
+      delete next[speaker]
+      return next
+    })
   }
 
   return (
@@ -975,6 +996,35 @@ function TranscriptPane({
       {editable ? (
         <div className="transcript-actions">
           <button onClick={addLine}>Add Line</button>
+          {speakers.length ? (
+            <details className="speaker-tools">
+              <summary>Speakers</summary>
+              <div className="speaker-rename-list">
+                {speakers.map((speaker) => {
+                  const draft = speakerDrafts[speaker] ?? speaker
+                  const canRename = normalizeSpeakerName(draft) !== speaker
+
+                  return (
+                    <div className="speaker-rename-row" key={speaker}>
+                      <span>{speaker}</span>
+                      <input
+                        aria-label={`Rename speaker ${speaker}`}
+                        value={draft}
+                        onChange={(event) => updateSpeakerDraft(speaker, event.target.value)}
+                      />
+                      <button
+                        aria-label={`Rename all ${speaker}`}
+                        disabled={!canRename}
+                        onClick={() => renameSpeaker(speaker)}
+                      >
+                        Rename
+                      </button>
+                    </div>
+                  )
+                })}
+              </div>
+            </details>
+          ) : null}
         </div>
       ) : null}
     </aside>
@@ -1504,6 +1554,14 @@ function autoRows(value: string, minimum: number, charsPerLine: number): number 
   const hardLines = value.split('\n').length
   const softLines = Math.ceil(value.length / charsPerLine)
   return Math.max(minimum, hardLines, softLines || 1)
+}
+
+function uniqueTranscriptSpeakers(transcript: TranscriptLine[]): string[] {
+  return Array.from(new Set(transcript.map((line) => normalizeSpeakerName(line.speaker))))
+}
+
+function normalizeSpeakerName(value: string): string {
+  return value.trim() || 'Speaker'
 }
 
 function audioTitleFromFileName(fileName: string): string {

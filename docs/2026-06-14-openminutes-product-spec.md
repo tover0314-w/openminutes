@@ -1453,6 +1453,32 @@ Still intentionally not completed:
 4. Speaker merge/rename across the transcript.
 5. Rich source citations from AI Notes back to transcript lines.
 
+### 15.17 Implementation Slice 13: Transcript Speaker Rename/Merge
+
+Completed in the thirteenth push:
+
+1. Added a compact `Speakers` tool inside Review's Original Transcript inspector.
+2. Lists unique speakers from the current transcript source.
+3. Allows renaming all lines for a speaker in one action.
+4. Supports speaker merge by renaming one speaker to an existing speaker name.
+5. Updates the AI generation context because speaker changes are applied to the source transcript, not only the visible labels.
+6. Added UI tests proving:
+   - A speaker can be renamed across all matching transcript lines.
+   - A speaker can be merged into another existing speaker.
+   - The generation context reflects the renamed source speakers.
+
+Product rule clarified:
+
+Speaker tools are transcript review tools, not AI diarization. They should help users quickly repair source transcript labels before generating or regenerating AI Notes.
+
+Still intentionally not completed:
+
+1. Automatic speaker diarization.
+2. Native microphone capture.
+3. Native system audio capture.
+4. Streamed audio upload from Rust.
+5. Rich source citations from AI Notes back to transcript lines.
+
 ## 16. Open Questions
 
 1. Final product name: OpenMinutes or another name?

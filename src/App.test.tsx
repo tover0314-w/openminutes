@@ -217,6 +217,39 @@ describe('App', () => {
     expect(screen.queryByDisplayValue(/I think the meeting product should stay separate first/i)).not.toBeInTheDocument()
   })
 
+  it('can rename and merge transcript speakers across Review source lines', async () => {
+    const user = userEvent.setup()
+    render(<App />)
+    const nav = screen.getByRole('navigation', { name: /main navigation/i })
+
+    await user.click(within(nav).getByRole('button', { name: /^meeting$/i }))
+    await user.click(screen.getByRole('button', { name: /stop recording from meeting/i }))
+
+    const transcriptPane = screen.getByRole('complementary', { name: /original transcript/i })
+    await user.click(within(transcriptPane).getByText(/speakers/i))
+
+    const alexRename = within(transcriptPane).getByRole('textbox', { name: /rename speaker alex/i })
+    await user.clear(alexRename)
+    await user.type(alexRename, 'Tov')
+    await user.click(within(transcriptPane).getByRole('button', { name: /rename all alex/i }))
+
+    const speakerInputs = within(transcriptPane).getAllByRole('textbox', {
+      name: /transcript speaker/i,
+    })
+    expect(speakerInputs.map((input) => (input as HTMLInputElement).value)).toEqual([
+      'Tov',
+      'Tov',
+      'Tov',
+      'Tov',
+    ])
+
+    await user.click(screen.getByText(/generation context/i))
+
+    const contextPreview = screen.getByText((_, node) => node?.tagName === 'PRE')?.textContent ?? ''
+    expect(contextPreview).toContain('10:06 Tov: During recording')
+    expect(contextPreview).not.toContain('10:06 Alex:')
+  })
+
   it('copies Review AI Notes as Markdown', async () => {
     const user = userEvent.setup()
     const writeText = vi.fn().mockResolvedValue(undefined)
