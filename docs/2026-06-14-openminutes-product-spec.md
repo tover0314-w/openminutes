@@ -1479,6 +1479,68 @@ Still intentionally not completed:
 4. Streamed audio upload from Rust.
 5. Rich source citations from AI Notes back to transcript lines.
 
+### 15.18 Implementation Slice 14: AI Notes Source Citation Links
+
+Completed in the fourteenth push:
+
+1. Added source citation chips under AI Notes content:
+   - Summary.
+   - Decisions.
+   - Action items.
+   - Open questions.
+   - Key points.
+   - Follow-up draft.
+2. Citation chips link back to matching original transcript lines.
+3. Clicking a citation highlights the referenced transcript source line in the right inspector.
+4. Matching is deterministic and local for the MVP:
+   - Tokenizes AI output and transcript lines.
+   - Scores transcript lines by keyword overlap.
+   - Shows the highest-confidence local matches.
+5. Added UI tests proving:
+   - A source chip appears for AI Notes text that matches transcript source.
+   - Clicking the chip highlights the cited transcript line.
+
+Product rule clarified:
+
+Source citations are a review aid. The MVP may use local deterministic matching, but future provider outputs should support model-generated citations or structured source references where available.
+
+Still intentionally not completed:
+
+1. Model-generated structured citations.
+2. Citation confidence display.
+3. Citation export into Markdown.
+4. Native microphone capture.
+5. Native system audio capture.
+6. Streamed audio upload from Rust.
+
+### 15.19 Implementation Slice 15: Review Reading Mode Hardening
+
+Completed in the fifteenth push:
+
+1. Changed the default Review view to render AI Notes as plain document text:
+   - Summary and follow-up draft render as paragraphs.
+   - Decisions, open questions, and key points render as document lists.
+   - Action items render as readable task rows with owner badges.
+2. Moved AI Notes text fields behind an explicit `Edit Review` mode.
+3. Kept `Done Editing` as the exit path so editing stays available without making Review look like a form.
+4. Kept source citation chips visible in the default reading view.
+5. Changed `User Notes` into a full, quote-style source block:
+   - User-recorded notes are shown without clipping.
+   - User notes are visually stronger than raw transcript text.
+   - Markers remain compact emphasized signals below the notes.
+6. Added UI test coverage proving default Review does not expose the AI summary text field until editing is requested.
+
+Product rule clarified:
+
+Review should open as a readable meeting note. The user should feel they are reviewing an AI-generated document with emphasized human context, not filling in a generated form. Editing is secondary and explicit.
+
+Still intentionally not completed:
+
+1. Rich-text editing.
+2. Per-paragraph inline edit affordances.
+3. Collapsible long user-note source blocks.
+4. Citation export into Markdown.
+
 ## 16. Open Questions
 
 1. Final product name: OpenMinutes or another name?

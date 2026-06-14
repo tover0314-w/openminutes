@@ -32,6 +32,7 @@ Implemented foundation:
 - Retry affordance for failed audio import/STT setup.
 - Add/delete controls for original transcript source lines.
 - Speaker rename/merge controls for original transcript source lines.
+- Source citation chips from AI Notes back to original transcript lines.
 - Review generate/regenerate failure states that preserve existing AI Notes.
 - Markdown formatting for AI Notes export.
 - Copy Markdown action in the Review workspace.
@@ -51,9 +52,9 @@ Review turns the meeting into AI Notes, with the original transcript kept as sou
 
 ![OpenMinutes Review](output/playwright/openminutes-review.png)
 
-Review reads like a document while emphasizing user notes and markers as source signals:
+Review reads like a document while emphasizing user notes and markers as source signals. AI Notes can also link back to cited original transcript lines:
 
-![OpenMinutes Review Document Notes](output/playwright/openminutes-review-document-notes.png)
+![OpenMinutes Review Document UI](output/playwright/openminutes-review-document-ui.png)
 
 Settings keeps the OpenTypeless-compatible two-column desktop preference layout:
 

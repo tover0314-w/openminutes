@@ -24,6 +24,8 @@ describe('App', () => {
 
     await user.click(screen.getByRole('button', { name: /stop recording from meeting/i }))
     expect(screen.getByLabelText(/ai notes/i)).toBeInTheDocument()
+    expect(screen.getByText(/desktop-first meeting product/i)).toBeInTheDocument()
+    expect(screen.queryByRole('textbox', { name: /ai summary/i })).not.toBeInTheDocument()
     expect(screen.getByRole('complementary', { name: /original transcript/i })).toBeInTheDocument()
   })
 
@@ -129,6 +131,7 @@ describe('App', () => {
     await user.click(within(nav).getByRole('button', { name: /^meeting$/i }))
     await user.click(screen.getByRole('button', { name: /stop recording from meeting/i }))
 
+    await user.click(screen.getByRole('button', { name: /edit review/i }))
     const summary = screen.getByRole('textbox', { name: /ai summary/i })
     await user.clear(summary)
     await user.type(summary, 'Edited customer-ready summary.')
@@ -171,7 +174,7 @@ describe('App', () => {
 
     await user.click(screen.getByRole('button', { name: /^generate$/i }))
 
-    expect(await screen.findByDisplayValue(/local demo notes for customer-call/i)).toBeInTheDocument()
+    expect(await screen.findByText(/local demo notes for customer-call/i)).toBeInTheDocument()
   })
 
   it('uses edited original transcript lines in the AI generation context', async () => {
@@ -192,6 +195,27 @@ describe('App', () => {
         Boolean(node?.tagName === 'PRE' && node.textContent?.includes('Edited source transcript line.')),
       ),
     ).toBeInTheDocument()
+  })
+
+  it('links AI Notes back to cited transcript source lines', async () => {
+    const user = userEvent.setup()
+    render(<App />)
+    const nav = screen.getByRole('navigation', { name: /main navigation/i })
+
+    await user.click(within(nav).getByRole('button', { name: /^meeting$/i }))
+    await user.click(screen.getByRole('button', { name: /stop recording from meeting/i }))
+
+    await user.click(screen.getByRole('button', { name: /edit review/i }))
+    const decision = screen.getByRole('textbox', { name: /decision 1/i })
+    await user.clear(decision)
+    await user.type(decision, 'During recording, show transcript. AI Notes come after stop.')
+
+    const [sourceLink] = screen.getAllByRole('button', { name: /source 10:06 alex/i })
+    await user.click(sourceLink)
+
+    const transcriptPane = screen.getByRole('complementary', { name: /original transcript/i })
+    const citedTranscript = within(transcriptPane).getByDisplayValue(/during recording, show transcript/i)
+    expect(citedTranscript.closest('.transcript-line')).toHaveClass('selected-source')
   })
 
   it('can add and delete original transcript lines in Review', async () => {

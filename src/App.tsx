@@ -607,6 +607,7 @@ function MeetingPage({
   onUpdateTranscript: (transcript: TranscriptLine[]) => void
 }) {
   const contextPreview = buildAiNotesContext(meeting)
+  const [selectedTranscriptLineId, setSelectedTranscriptLineId] = useState<string | undefined>()
 
   return (
     <section className="content meeting-layout" aria-label="Meeting">
@@ -631,12 +632,14 @@ function MeetingPage({
             onRetryTranscriptImport={onRetryTranscriptImport}
             onUpdateAiNotes={onUpdateAiNotes}
             contextPreview={contextPreview}
+            onSelectTranscriptSource={setSelectedTranscriptLineId}
           />
           <TranscriptPane
             title="Original Transcript"
             subtitle="Source for AI Notes"
             meeting={meeting}
             editable
+            selectedLineId={selectedTranscriptLineId}
             onUpdateTranscript={onUpdateTranscript}
           />
         </>
@@ -694,6 +697,7 @@ function AiNotesPane({
   onRetryTranscriptImport,
   onUpdateAiNotes,
   contextPreview,
+  onSelectTranscriptSource,
 }: {
   meeting: Meeting
   onRegenerate: () => void | Promise<void>
@@ -708,8 +712,10 @@ function AiNotesPane({
   onRetryTranscriptImport?: () => void | Promise<void>
   onUpdateAiNotes: (aiNotes: AiNotes) => void
   contextPreview: string
+  onSelectTranscriptSource: (lineId: string) => void
 }) {
   const notes = meeting.aiNotes
+  const [isEditingReview, setIsEditingReview] = useState(false)
   const isGenerating = aiGenerationStatus === 'generating'
   const isImportingTranscript = transcriptionStatus === 'importing'
   const generationFailed =
@@ -781,41 +787,100 @@ function AiNotesPane({
           ) : null}
           <ReviewSourceHighlights meeting={meeting} />
           <AiSection title="Summary">
-            <AiTextArea
-              label="AI summary"
-              value={notes.summary}
-              rows={3}
-              onChange={(summary) => updateNotes({ summary })}
+            {isEditingReview ? (
+              <AiTextArea
+                label="AI summary"
+                value={notes.summary}
+                rows={3}
+                onChange={(summary) => updateNotes({ summary })}
+              />
+            ) : (
+              <ReviewParagraph text={notes.summary} />
+            )}
+            <SourceCitations
+              citations={findTranscriptCitations(meeting.transcript, notes.summary)}
+              onSelect={onSelectTranscriptSource}
             />
           </AiSection>
-          <EditableStringListSection
-            title="Decisions"
-            itemLabel="Decision"
-            items={notes.decisions}
-            onChange={(decisions) => updateNotes({ decisions })}
-          />
-          <EditableActionItemsSection
-            items={notes.actionItems}
-            onChange={(actionItems) => updateNotes({ actionItems })}
-          />
-          <EditableStringListSection
-            title="Open Questions"
-            itemLabel="Open question"
-            items={notes.openQuestions}
-            onChange={(openQuestions) => updateNotes({ openQuestions })}
-          />
-          <EditableStringListSection
-            title="Key Points"
-            itemLabel="Key point"
-            items={notes.keyPoints}
-            onChange={(keyPoints) => updateNotes({ keyPoints })}
-          />
+          {isEditingReview ? (
+            <EditableStringListSection
+              title="Decisions"
+              itemLabel="Decision"
+              items={notes.decisions}
+              transcript={meeting.transcript}
+              onChange={(decisions) => updateNotes({ decisions })}
+              onSelectTranscriptSource={onSelectTranscriptSource}
+            />
+          ) : (
+            <ReviewStringListSection
+              title="Decisions"
+              items={notes.decisions}
+              transcript={meeting.transcript}
+              onSelectTranscriptSource={onSelectTranscriptSource}
+            />
+          )}
+          {isEditingReview ? (
+            <EditableActionItemsSection
+              items={notes.actionItems}
+              transcript={meeting.transcript}
+              onChange={(actionItems) => updateNotes({ actionItems })}
+              onSelectTranscriptSource={onSelectTranscriptSource}
+            />
+          ) : (
+            <ReviewActionItemsSection
+              items={notes.actionItems}
+              transcript={meeting.transcript}
+              onSelectTranscriptSource={onSelectTranscriptSource}
+            />
+          )}
+          {isEditingReview ? (
+            <EditableStringListSection
+              title="Open Questions"
+              itemLabel="Open question"
+              items={notes.openQuestions}
+              transcript={meeting.transcript}
+              onChange={(openQuestions) => updateNotes({ openQuestions })}
+              onSelectTranscriptSource={onSelectTranscriptSource}
+            />
+          ) : (
+            <ReviewStringListSection
+              title="Open Questions"
+              items={notes.openQuestions}
+              transcript={meeting.transcript}
+              onSelectTranscriptSource={onSelectTranscriptSource}
+            />
+          )}
+          {isEditingReview ? (
+            <EditableStringListSection
+              title="Key Points"
+              itemLabel="Key point"
+              items={notes.keyPoints}
+              transcript={meeting.transcript}
+              onChange={(keyPoints) => updateNotes({ keyPoints })}
+              onSelectTranscriptSource={onSelectTranscriptSource}
+            />
+          ) : (
+            <ReviewStringListSection
+              title="Key Points"
+              items={notes.keyPoints}
+              transcript={meeting.transcript}
+              onSelectTranscriptSource={onSelectTranscriptSource}
+            />
+          )}
           <AiSection title="Follow-up Draft">
-            <AiTextArea
-              label="Follow-up draft"
-              value={notes.followUpDraft}
-              rows={4}
-              onChange={(followUpDraft) => updateNotes({ followUpDraft })}
+            {isEditingReview ? (
+              <AiTextArea
+                label="Follow-up draft"
+                value={notes.followUpDraft}
+                rows={4}
+                onChange={(followUpDraft) => updateNotes({ followUpDraft })}
+              />
+            ) : (
+              <ReviewParagraph text={notes.followUpDraft} />
+            )}
+            <SourceCitations
+              citations={findTranscriptCitations(meeting.transcript, notes.followUpDraft)}
+              onSelect={onSelectTranscriptSource}
             />
           </AiSection>
           <details className="context-preview">
@@ -853,6 +918,9 @@ function AiNotesPane({
           disabled={isGenerating || isImportingTranscript || !canGenerateAiNotes}
         >
           {regenerateLabel}
+        </button>
+        <button onClick={() => setIsEditingReview((editing) => !editing)} disabled={!notes}>
+          {isEditingReview ? 'Done Editing' : 'Edit Review'}
         </button>
         <button onClick={onCopyMarkdown} disabled={!notes}>
           {copyLabel}
@@ -899,6 +967,7 @@ function TranscriptPane({
   meeting,
   live = false,
   editable = false,
+  selectedLineId,
   onUpdateTranscript,
 }: {
   title: string
@@ -906,6 +975,7 @@ function TranscriptPane({
   meeting: Meeting
   live?: boolean
   editable?: boolean
+  selectedLineId?: string
   onUpdateTranscript?: (transcript: TranscriptLine[]) => void
 }) {
   const [speakerDrafts, setSpeakerDrafts] = useState<Record<string, string>>({})
@@ -958,7 +1028,10 @@ function TranscriptPane({
       <div className="transcript-list">
         {meeting.transcript.map((line, index) =>
           editable ? (
-            <div key={line.id} className="transcript-line transcript-edit-line">
+            <div
+              key={line.id}
+              className={`transcript-line transcript-edit-line ${line.id === selectedLineId ? 'selected-source' : ''}`}
+            >
               <time>{line.time}</time>
               <div className="transcript-edit-fields">
                 <input
@@ -984,7 +1057,7 @@ function TranscriptPane({
               </div>
             </div>
           ) : (
-            <div key={line.id} className="transcript-line">
+            <div key={line.id} className={`transcript-line ${line.id === selectedLineId ? 'selected-source' : ''}`}>
               <time>{line.time}</time>
               <p>
                 <strong>{line.speaker}:</strong> {line.text}
@@ -1396,12 +1469,111 @@ function ModeSwitch({ active }: { active: 'focus' | 'review' }) {
   )
 }
 
+interface SourceCitation {
+  line: TranscriptLine
+  score: number
+}
+
+function SourceCitations({
+  citations,
+  onSelect,
+}: {
+  citations: SourceCitation[]
+  onSelect?: (lineId: string) => void
+}) {
+  if (!citations.length || !onSelect) return null
+
+  return (
+    <div className="source-citations" aria-label="Source transcript links">
+      {citations.map(({ line }) => (
+        <button key={line.id} onClick={() => onSelect(line.id)}>
+          Source {line.time} {line.speaker}
+        </button>
+      ))}
+    </div>
+  )
+}
+
 function AiSection({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <section className="ai-section">
       <h3>{title}</h3>
       {children}
     </section>
+  )
+}
+
+function ReviewParagraph({ text }: { text: string }) {
+  return <p className="review-paragraph">{text.trim() || 'None yet.'}</p>
+}
+
+function ReviewStringListSection({
+  title,
+  items,
+  transcript = [],
+  onSelectTranscriptSource,
+}: {
+  title: string
+  items: string[]
+  transcript?: TranscriptLine[]
+  onSelectTranscriptSource?: (lineId: string) => void
+}) {
+  const visibleItems = items.map((item) => item.trim()).filter(Boolean)
+
+  return (
+    <AiSection title={title}>
+      {visibleItems.length ? (
+        <ul className="document-list">
+          {visibleItems.map((item, index) => (
+            <li key={`${title}-${index}`}>
+              <span>{item}</span>
+              <SourceCitations
+                citations={findTranscriptCitations(transcript, item)}
+                onSelect={onSelectTranscriptSource}
+              />
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="review-empty">None yet.</p>
+      )}
+    </AiSection>
+  )
+}
+
+function ReviewActionItemsSection({
+  items,
+  transcript = [],
+  onSelectTranscriptSource,
+}: {
+  items: ActionItem[]
+  transcript?: TranscriptLine[]
+  onSelectTranscriptSource?: (lineId: string) => void
+}) {
+  const visibleItems = items.filter((item) => item.text.trim())
+
+  return (
+    <AiSection title="Action Items">
+      {visibleItems.length ? (
+        <ul className="action-document-list">
+          {visibleItems.map((item, index) => (
+            <li key={item.id || `action-${index}`}>
+              <span className="action-check" aria-hidden="true" />
+              <div className="action-document-content">
+                <p>{item.text}</p>
+                {item.owner ? <span className="action-owner">{item.owner}</span> : null}
+                <SourceCitations
+                  citations={findTranscriptCitations(transcript, item.text)}
+                  onSelect={onSelectTranscriptSource}
+                />
+              </div>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="review-empty">None yet.</p>
+      )}
+    </AiSection>
   )
 }
 
@@ -1436,12 +1608,16 @@ function EditableStringListSection({
   title,
   itemLabel,
   items,
+  transcript = [],
   onChange,
+  onSelectTranscriptSource,
 }: {
   title: string
   itemLabel: string
   items: string[]
+  transcript?: TranscriptLine[]
   onChange: (items: string[]) => void
+  onSelectTranscriptSource?: (lineId: string) => void
 }) {
   const visibleItems = items.length ? items : ['']
 
@@ -1458,13 +1634,19 @@ function EditableStringListSection({
         {visibleItems.map((item, index) => (
           <div className="document-list-row" key={`${itemLabel}-${index}`}>
             <span className="document-bullet" aria-hidden="true" />
-            <AiTextArea
-              label={`${itemLabel} ${index + 1}`}
-              value={item}
-              rows={1}
-              onChange={(value) => updateItem(index, value)}
-              onBlur={compactItems}
-            />
+            <div className="document-list-content">
+              <AiTextArea
+                label={`${itemLabel} ${index + 1}`}
+                value={item}
+                rows={1}
+                onChange={(value) => updateItem(index, value)}
+                onBlur={compactItems}
+              />
+              <SourceCitations
+                citations={findTranscriptCitations(transcript, item)}
+                onSelect={onSelectTranscriptSource}
+              />
+            </div>
           </div>
         ))}
         <button className="inline-add" onClick={() => onChange([...items, ''])}>
@@ -1477,10 +1659,14 @@ function EditableStringListSection({
 
 function EditableActionItemsSection({
   items,
+  transcript = [],
   onChange,
+  onSelectTranscriptSource,
 }: {
   items: ActionItem[]
+  transcript?: TranscriptLine[]
   onChange: (items: ActionItem[]) => void
+  onSelectTranscriptSource?: (lineId: string) => void
 }) {
   const visibleItems = items.length ? items : [{ id: 'a1', text: '' }]
 
@@ -1505,13 +1691,19 @@ function EditableActionItemsSection({
         {visibleItems.map((item, index) => (
           <div className="action-edit-row document-list-row" key={item.id || `action-${index}`}>
             <span className="document-bullet" aria-hidden="true" />
-            <AiTextArea
-              label={`Action item ${index + 1}`}
-              value={item.text}
-              rows={2}
-              onChange={(text) => updateItem(index, { text })}
-              onBlur={compactItems}
-            />
+            <div className="document-list-content">
+              <AiTextArea
+                label={`Action item ${index + 1}`}
+                value={item.text}
+                rows={2}
+                onChange={(text) => updateItem(index, { text })}
+                onBlur={compactItems}
+              />
+              <SourceCitations
+                citations={findTranscriptCitations(transcript, item.text)}
+                onSelect={onSelectTranscriptSource}
+              />
+            </div>
             <input
               className="ai-edit-input"
               aria-label={`Action owner ${index + 1}`}
@@ -1554,6 +1746,53 @@ function autoRows(value: string, minimum: number, charsPerLine: number): number 
   const hardLines = value.split('\n').length
   const softLines = Math.ceil(value.length / charsPerLine)
   return Math.max(minimum, hardLines, softLines || 1)
+}
+
+function findTranscriptCitations(
+  transcript: TranscriptLine[],
+  text: string,
+  limit = 2,
+): SourceCitation[] {
+  const textTokens = keywordTokens(text)
+  if (!textTokens.size) return []
+
+  return transcript
+    .map((line) => {
+      const lineTokens = keywordTokens(`${line.speaker} ${line.text}`)
+      const overlap = Array.from(textTokens).filter((token) => lineTokens.has(token)).length
+      const score = overlap / Math.max(textTokens.size, 1)
+      return { line, score }
+    })
+    .filter((citation) => citation.score >= 0.16)
+    .sort((left, right) => right.score - left.score)
+    .slice(0, limit)
+}
+
+const citationStopWords = new Set([
+  'about',
+  'after',
+  'before',
+  'during',
+  'from',
+  'into',
+  'notes',
+  'should',
+  'that',
+  'their',
+  'there',
+  'this',
+  'with',
+])
+
+function keywordTokens(text: string): Set<string> {
+  return new Set(
+    text
+      .toLowerCase()
+      .replace(/[^a-z0-9\s-]/g, ' ')
+      .split(/\s+/)
+      .map((token) => token.trim())
+      .filter((token) => token.length > 3 && !citationStopWords.has(token)),
+  )
 }
 
 function uniqueTranscriptSpeakers(transcript: TranscriptLine[]): string[] {
