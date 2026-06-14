@@ -26,7 +26,9 @@ Implemented foundation:
 - OpenAI-compatible AI Notes provider adapter behind the provider boundary.
 - OpenAI-compatible STT provider adapter for imported audio files.
 - Editable AI Notes in Review, including key points and action item owners.
+- Editable original transcript source lines in Review.
 - Audio file import entry for testing STT before native capture.
+- Retry affordance for failed audio import/STT setup.
 - Review generate/regenerate failure states that preserve existing AI Notes.
 - Markdown formatting for AI Notes export.
 - Copy Markdown action in the Review workspace.
@@ -65,6 +67,14 @@ Review AI Notes are editable before copy/export:
 Imported audio uses the STT provider path and surfaces configuration errors:
 
 ![OpenMinutes Import Error](output/playwright/openminutes-import-transcript-error.png)
+
+Original transcript lines are editable in Review:
+
+![OpenMinutes Editable Transcript](output/playwright/openminutes-editable-transcript.png)
+
+Failed audio imports can be retried after configuration is fixed:
+
+![OpenMinutes Retry Import](output/playwright/openminutes-retry-import.png)
 
 ## Development
 

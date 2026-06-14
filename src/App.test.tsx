@@ -132,8 +132,29 @@ describe('App', () => {
     await user.upload(input as HTMLInputElement, new File(['audio'], 'customer-call.wav', { type: 'audio/wav' }))
 
     expect(await screen.findByRole('alert')).toHaveTextContent(/api key is not configured/i)
+    expect(screen.getByRole('button', { name: /retry import/i })).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: /meeting/i })).toBeInTheDocument()
     expect(screen.getByText(/customer-call/i)).toBeInTheDocument()
+  })
+
+  it('uses edited original transcript lines in the AI generation context', async () => {
+    const user = userEvent.setup()
+    render(<App />)
+    const nav = screen.getByRole('navigation', { name: /main navigation/i })
+
+    await user.click(within(nav).getByRole('button', { name: /^meeting$/i }))
+    await user.click(screen.getByRole('button', { name: /stop recording from meeting/i }))
+
+    const transcriptText = screen.getByRole('textbox', { name: /transcript text 1/i })
+    await user.clear(transcriptText)
+    await user.type(transcriptText, 'Edited source transcript line.')
+    await user.click(screen.getByText(/generation context/i))
+
+    expect(
+      screen.getByText((_, node) =>
+        Boolean(node?.tagName === 'PRE' && node.textContent?.includes('Edited source transcript line.')),
+      ),
+    ).toBeInTheDocument()
   })
 
   it('copies Review AI Notes as Markdown', async () => {

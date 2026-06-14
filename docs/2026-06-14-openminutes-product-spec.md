@@ -1291,6 +1291,40 @@ Next recommended slice:
 4. Add a local mock audio import path for offline demos.
 5. Start the macOS microphone capture slice only after import/STT UX is stable.
 
+### 15.12 Implementation Slice 8: Retry and Editable Transcript Source
+
+Completed in the eighth push:
+
+1. Added retry support for failed audio imports.
+2. Kept the last imported `File` in runtime state so `Retry Import` can rerun STT after the user fixes configuration.
+3. Added `Retry Generate` copy for failed AI Notes generation.
+4. Disabled AI generation when there is no transcript, manual note, marker, or existing AI Notes context.
+5. Made Review's Original Transcript editable:
+   - Speaker field.
+   - Transcript text field.
+   - Timestamp remains read-only source metadata.
+6. Kept Focus/Live Transcript read-only.
+7. Wired edited transcript lines into `buildAiNotesContext`.
+8. Added tests for:
+   - Retry Import appearing after missing-key STT failure.
+   - Edited transcript text appearing in the AI generation context.
+
+Still intentionally not completed:
+
+1. Native Tauri file picker.
+2. Native audio capture.
+3. STT retry persistence across app restart.
+4. Transcript line add/delete/reorder controls.
+5. Speaker diarization or speaker merge tools.
+6. Batch transcript search/replace.
+
+Next recommended slice:
+
+1. Add a Tauri native file picker for audio import.
+2. Add transcript line add/delete controls.
+3. Add a mock/local audio import mode for demos without provider keys.
+4. Add retry persistence for failed imports only if users need restart-safe recovery.
+
 ## 16. Open Questions
 
 1. Final product name: OpenMinutes or another name?

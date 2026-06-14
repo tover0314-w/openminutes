@@ -14,6 +14,7 @@ import {
   type AiNotes,
   type Meeting,
   type MeetingPhase,
+  type TranscriptLine,
   buildAiNotesContext,
   createDemoMeeting,
   getMeetingViewModel,
@@ -43,6 +44,12 @@ type SettingsPane = 'general' | 'audio' | 'ai' | 'exports' | 'about'
 type AiGenerationStatus = 'idle' | 'generating' | 'configuration_error' | 'error'
 type TranscriptionStatus = 'idle' | 'importing' | 'configuration_error' | 'error'
 type ApiKeyStatus = 'idle' | 'saving' | 'saved' | 'deleted' | 'error'
+
+interface AudioImportRequest {
+  meetingId: string
+  title: string
+  file: File
+}
 
 const navItems = [
   { id: 'today' as const, label: 'Today', icon: Home },
@@ -89,6 +96,7 @@ export function App() {
   >('idle')
   const [transcriptionStatus, setTranscriptionStatus] = useState<TranscriptionStatus>('idle')
   const [transcriptionError, setTranscriptionError] = useState('')
+  const [lastAudioImport, setLastAudioImport] = useState<AudioImportRequest | undefined>()
   const [aiGenerationStatus, setAiGenerationStatus] = useState<AiGenerationStatus>('idle')
   const [aiGenerationError, setAiGenerationError] = useState('')
   const [apiKeyConfigured, setApiKeyConfigured] = useState(false)
@@ -115,6 +123,7 @@ export function App() {
     setMeeting(createDemoMeeting('recording'))
     setTranscriptionStatus('idle')
     setTranscriptionError('')
+    setLastAudioImport(undefined)
     setAiGenerationStatus('idle')
     setAiGenerationError('')
     setRoute('meeting')
@@ -127,6 +136,7 @@ export function App() {
     }))
     setTranscriptionStatus('idle')
     setTranscriptionError('')
+    setLastAudioImport(undefined)
     setAiGenerationStatus('idle')
     setAiGenerationError('')
     setRoute('meeting')
@@ -141,11 +151,25 @@ export function App() {
     event.target.value = ''
     if (!file) return
 
-    const meetingId = `import-${Date.now()}`
+    const request = {
+      meetingId: `import-${Date.now()}`,
+      title: audioTitleFromFileName(file.name),
+      file,
+    }
+    setLastAudioImport(request)
+    await transcribeAudioImport(request)
+  }
+
+  const retryAudioImport = async () => {
+    if (!lastAudioImport) return
+    await transcribeAudioImport(lastAudioImport)
+  }
+
+  const transcribeAudioImport = async (request: AudioImportRequest) => {
     const importedMeeting: Meeting = {
       ...createDemoMeeting('finalizing_transcript'),
-      id: meetingId,
-      title: audioTitleFromFileName(file.name),
+      id: request.meetingId,
+      title: request.title,
       duration: '00:00',
       phase: 'finalizing_transcript',
       manualNotes: '',
@@ -164,14 +188,14 @@ export function App() {
     try {
       const provider = createTranscriptionProvider(appSettings, apiKeyRepository)
       const transcript = await provider.transcribe({
-        meetingId,
-        audioUri: file.name,
-        audioFile: file,
-        audioFileName: file.name,
+        meetingId: request.meetingId,
+        audioUri: request.file.name,
+        audioFile: request.file,
+        audioFileName: request.file.name,
       })
 
       setMeeting((current) =>
-        current.id === meetingId
+        current.id === request.meetingId
           ? {
               ...current,
               phase: 'needs_review',
@@ -182,7 +206,7 @@ export function App() {
       setTranscriptionStatus('idle')
     } catch (error) {
       setMeeting((current) =>
-        current.id === meetingId
+        current.id === request.meetingId
           ? {
               ...current,
               phase: 'error',
@@ -279,6 +303,13 @@ export function App() {
     setMeeting((current) => ({
       ...current,
       aiNotes,
+    }))
+  }
+
+  const updateTranscript = (transcript: TranscriptLine[]) => {
+    setMeeting((current) => ({
+      ...current,
+      transcript,
     }))
   }
 
@@ -400,7 +431,9 @@ export function App() {
             aiGenerationError={aiGenerationError}
             transcriptionStatus={transcriptionStatus}
             transcriptionError={transcriptionError}
+            onRetryTranscriptImport={lastAudioImport ? retryAudioImport : undefined}
             onUpdateAiNotes={updateAiNotes}
+            onUpdateTranscript={updateTranscript}
           />
         )}
         {route === 'library' && <LibraryPage meetings={meetings} onOpenMeeting={() => setRoute('meeting')} />}
@@ -519,7 +552,9 @@ function MeetingPage({
   aiGenerationError,
   transcriptionStatus,
   transcriptionError,
+  onRetryTranscriptImport,
   onUpdateAiNotes,
+  onUpdateTranscript,
 }: {
   meeting: Meeting
   view: ReturnType<typeof getMeetingViewModel>
@@ -533,7 +568,9 @@ function MeetingPage({
   aiGenerationError: string
   transcriptionStatus: TranscriptionStatus
   transcriptionError: string
+  onRetryTranscriptImport?: () => void | Promise<void>
   onUpdateAiNotes: (aiNotes: AiNotes) => void
+  onUpdateTranscript: (transcript: TranscriptLine[]) => void
 }) {
   const contextPreview = buildAiNotesContext(meeting)
 
@@ -557,10 +594,17 @@ function MeetingPage({
             aiGenerationError={aiGenerationError}
             transcriptionStatus={transcriptionStatus}
             transcriptionError={transcriptionError}
+            onRetryTranscriptImport={onRetryTranscriptImport}
             onUpdateAiNotes={onUpdateAiNotes}
             contextPreview={contextPreview}
           />
-          <TranscriptPane title="Original Transcript" subtitle="Source for AI Notes" meeting={meeting} />
+          <TranscriptPane
+            title="Original Transcript"
+            subtitle="Source for AI Notes"
+            meeting={meeting}
+            editable
+            onUpdateTranscript={onUpdateTranscript}
+          />
         </>
       )}
     </section>
@@ -613,6 +657,7 @@ function AiNotesPane({
   aiGenerationError,
   transcriptionStatus,
   transcriptionError,
+  onRetryTranscriptImport,
   onUpdateAiNotes,
   contextPreview,
 }: {
@@ -626,6 +671,7 @@ function AiNotesPane({
   aiGenerationError: string
   transcriptionStatus: TranscriptionStatus
   transcriptionError: string
+  onRetryTranscriptImport?: () => void | Promise<void>
   onUpdateAiNotes: (aiNotes: AiNotes) => void
   contextPreview: string
 }) {
@@ -652,7 +698,16 @@ function AiNotesPane({
           : exportStatus === 'error'
             ? 'Save Failed'
             : 'Save Markdown'
-  const regenerateLabel = isGenerating ? 'Generating...' : notes ? 'Regenerate' : 'Generate'
+  const hasGenerationContext =
+    meeting.transcript.length > 0 || Boolean(meeting.manualNotes.trim()) || meeting.markers.length > 0
+  const canGenerateAiNotes = Boolean(notes) || hasGenerationContext
+  const regenerateLabel = isGenerating
+    ? 'Generating...'
+    : generationFailed
+      ? 'Retry Generate'
+      : notes
+        ? 'Regenerate'
+        : 'Generate'
   const generationErrorMessage =
     aiGenerationStatus === 'configuration_error'
       ? 'API key is not configured. Add one in Settings > AI.'
@@ -742,6 +797,11 @@ function AiNotesPane({
             <div className="generation-alert" role="alert">
               <strong>Transcript import failed.</strong>
               <span>{transcriptionErrorMessage}</span>
+              {onRetryTranscriptImport ? (
+                <button className="alert-action" onClick={onRetryTranscriptImport}>
+                  Retry Import
+                </button>
+              ) : null}
             </div>
           ) : null}
           {generationFailed ? (
@@ -753,7 +813,10 @@ function AiNotesPane({
         </div>
       )}
       <div className="marker-bar">
-        <button onClick={onRegenerate} disabled={isGenerating || isImportingTranscript}>
+        <button
+          onClick={onRegenerate}
+          disabled={isGenerating || isImportingTranscript || !canGenerateAiNotes}
+        >
           {regenerateLabel}
         </button>
         <button onClick={onCopyMarkdown} disabled={!notes}>
@@ -772,24 +835,57 @@ function TranscriptPane({
   subtitle,
   meeting,
   live = false,
+  editable = false,
+  onUpdateTranscript,
 }: {
   title: string
   subtitle: string
   meeting: Meeting
   live?: boolean
+  editable?: boolean
+  onUpdateTranscript?: (transcript: TranscriptLine[]) => void
 }) {
+  const updateLine = (index: number, patch: Partial<TranscriptLine>) => {
+    onUpdateTranscript?.(
+      meeting.transcript.map((line, lineIndex) =>
+        lineIndex === index ? { ...line, ...patch } : line,
+      ),
+    )
+  }
+
   return (
     <aside className="pane jelly-card transcript-pane" aria-label={title}>
       <PaneHeader title={title} subtitle={subtitle} aside={live ? <span className="chip">Live</span> : <span className="chip">Source</span>} />
       <div className="transcript-list">
-        {meeting.transcript.map((line) => (
-          <div key={line.id} className="transcript-line">
-            <time>{line.time}</time>
-            <p>
-              <strong>{line.speaker}:</strong> {line.text}
-            </p>
-          </div>
-        ))}
+        {meeting.transcript.map((line, index) =>
+          editable ? (
+            <div key={line.id} className="transcript-line transcript-edit-line">
+              <time>{line.time}</time>
+              <div className="transcript-edit-fields">
+                <input
+                  className="transcript-speaker-input"
+                  aria-label={`Transcript speaker ${index + 1}`}
+                  value={line.speaker}
+                  onChange={(event) => updateLine(index, { speaker: event.target.value })}
+                />
+                <textarea
+                  className="transcript-textarea"
+                  aria-label={`Transcript text ${index + 1}`}
+                  rows={2}
+                  value={line.text}
+                  onChange={(event) => updateLine(index, { text: event.target.value })}
+                />
+              </div>
+            </div>
+          ) : (
+            <div key={line.id} className="transcript-line">
+              <time>{line.time}</time>
+              <p>
+                <strong>{line.speaker}:</strong> {line.text}
+              </p>
+            </div>
+          ),
+        )}
       </div>
     </aside>
   )
