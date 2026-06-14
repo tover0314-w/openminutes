@@ -27,7 +27,7 @@ Implemented foundation:
 - OpenAI-compatible STT provider adapter for imported audio files.
 - Editable AI Notes in Review, including key points and action item owners.
 - Editable original transcript source lines in Review.
-- Audio file import entry for testing STT before native capture.
+- Native desktop audio file picker with browser fallback for testing STT before native capture.
 - Retry affordance for failed audio import/STT setup.
 - Review generate/regenerate failure states that preserve existing AI Notes.
 - Markdown formatting for AI Notes export.

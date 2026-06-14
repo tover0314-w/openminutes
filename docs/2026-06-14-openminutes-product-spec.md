@@ -1325,6 +1325,53 @@ Next recommended slice:
 3. Add a mock/local audio import mode for demos without provider keys.
 4. Add retry persistence for failed imports only if users need restart-safe recovery.
 
+### 15.13 Implementation Slice 9: Native Desktop Audio Picker
+
+Completed in the ninth push:
+
+1. Added `@tauri-apps/plugin-dialog` for native desktop file selection.
+2. Added `tauri-plugin-dialog` to the Rust shell.
+3. Granted only `dialog:allow-open` in the main window capability.
+4. Added the Tauri command `read_audio_import_file`.
+5. Added a 100 MB guardrail for IPC-based audio import.
+6. Added extension-based MIME detection for common audio formats:
+   - `m4a`
+   - `mp3`
+   - `mp4`
+   - `wav`
+   - `webm`
+   - `ogg`
+   - `flac`
+7. Added a frontend `TauriAudioImportPicker`.
+8. Updated the app import flow:
+   - Desktop runtime opens a native file picker.
+   - Selected file bytes are read through Rust and converted to a frontend `File`.
+   - Browser/dev runtime keeps the hidden input fallback.
+   - The existing STT import flow remains shared after a file is selected.
+9. Added tests for:
+   - Native picker options.
+   - Cancelled picker behavior.
+   - Tauri command delegation.
+   - MIME type resolution.
+
+Tradeoff:
+
+The current native import reads the selected file into memory and passes bytes over IPC. This is acceptable for the current STT import foundation and protected by a 100 MB cap. A production recording workflow should stream or upload from Rust directly instead of passing large files through frontend IPC.
+
+Still intentionally not completed:
+
+1. Native microphone capture.
+2. Native system audio capture.
+3. Streamed file upload from Rust.
+4. Transcript line add/delete controls.
+5. Local/offline mock audio import mode.
+
+Next recommended slice:
+
+1. Add transcript line add/delete controls.
+2. Add local/offline mock audio import mode for demos.
+3. Start native microphone capture only after import/edit/retry workflows feel stable.
+
 ## 16. Open Questions
 
 1. Final product name: OpenMinutes or another name?

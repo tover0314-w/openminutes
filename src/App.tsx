@@ -21,9 +21,11 @@ import {
 } from './domain/meeting'
 import { type ApiKeyRepository, createMemoryApiKeyRepository } from './domain/apiKey'
 import { createTauriApiKeyRepository } from './desktop/apiKeyRepository'
+import { selectTauriAudioFile } from './desktop/audioImport'
 import { exportMarkdownFile } from './desktop/markdownExport'
 import { createTauriMeetingRepository } from './desktop/meetingRepository'
 import { createTauriAppSettingsRepository } from './desktop/settingsRepository'
+import { isTauriRuntime } from './desktop/tauri'
 import { formatMeetingMarkdown } from './domain/markdown'
 import {
   createAiNotesProvider,
@@ -142,7 +144,17 @@ export function App() {
     setRoute('meeting')
   }
 
-  const openAudioImport = () => {
+  const openAudioImport = async () => {
+    if (isTauriRuntime()) {
+      try {
+        const file = await selectTauriAudioFile()
+        if (file) await beginAudioImport(file)
+      } catch (error) {
+        showAudioImportSetupError(error)
+      }
+      return
+    }
+
     audioImportInputRef.current?.click()
   }
 
@@ -151,6 +163,10 @@ export function App() {
     event.target.value = ''
     if (!file) return
 
+    await beginAudioImport(file)
+  }
+
+  const beginAudioImport = async (file: File) => {
     const request = {
       meetingId: `import-${Date.now()}`,
       title: audioTitleFromFileName(file.name),
@@ -158,6 +174,24 @@ export function App() {
     }
     setLastAudioImport(request)
     await transcribeAudioImport(request)
+  }
+
+  const showAudioImportSetupError = (error: unknown) => {
+    const meetingId = `import-error-${Date.now()}`
+    setRoute('meeting')
+    setMeeting({
+      ...createDemoMeeting('error'),
+      id: meetingId,
+      title: 'Audio import',
+      duration: '00:00',
+      manualNotes: '',
+      markers: [],
+      transcript: [],
+      aiNotes: undefined,
+    })
+    setTranscriptionStatus('error')
+    setTranscriptionError(errorMessage(error))
+    setLastAudioImport(undefined)
   }
 
   const retryAudioImport = async () => {

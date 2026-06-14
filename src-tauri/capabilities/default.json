@@ -3,5 +3,5 @@
   "identifier": "default",
   "description": "Default permissions for the main OpenMinutes window.",
   "windows": ["main"],
-  "permissions": ["core:default"]
+  "permissions": ["core:default", "dialog:allow-open"]
 }

@@ -10,11 +10,20 @@ use std::{
 use tauri::{AppHandle, Manager};
 
 const KEYCHAIN_SERVICE: &str = "OpenMinutes";
+const MAX_AUDIO_IMPORT_BYTES: u64 = 100 * 1024 * 1024;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ExportedFile {
     path: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ImportedAudioFile {
+    file_name: String,
+    mime_type: String,
+    bytes: Vec<u8>,
 }
 
 #[tauri::command]
@@ -86,6 +95,33 @@ fn delete_provider_api_key(provider: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn read_audio_import_file(path: String) -> Result<ImportedAudioFile, String> {
+    let path = PathBuf::from(path);
+    let metadata = fs::metadata(&path)
+        .map_err(|error| format!("Could not read audio file metadata: {error}"))?;
+    if !metadata.is_file() {
+        return Err("Selected path is not a file".to_string());
+    }
+    if metadata.len() > MAX_AUDIO_IMPORT_BYTES {
+        return Err("Audio import is limited to 100 MB".to_string());
+    }
+
+    let bytes = fs::read(&path).map_err(|error| format!("Could not read audio file: {error}"))?;
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("meeting-audio")
+        .to_string();
+    let mime_type = audio_mime_type(&path).to_string();
+
+    Ok(ImportedAudioFile {
+        file_name,
+        mime_type,
+        bytes,
+    })
+}
+
+#[tauri::command]
 fn export_meeting_markdown(
     app: AppHandle,
     file_name: String,
@@ -111,6 +147,7 @@ fn export_meeting_markdown(
 
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             app_version,
             load_meetings,
@@ -122,6 +159,7 @@ pub fn run() {
             load_provider_api_key,
             save_provider_api_key,
             delete_provider_api_key,
+            read_audio_import_file,
             export_meeting_markdown,
         ])
         .run(tauri::generate_context!())
@@ -146,6 +184,24 @@ fn provider_key_account(provider: &str) -> String {
         .collect::<String>();
 
     format!("provider:{normalized}")
+}
+
+fn audio_mime_type(path: &Path) -> &'static str {
+    match path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .map(str::to_ascii_lowercase)
+        .as_deref()
+    {
+        Some("mp3") => "audio/mpeg",
+        Some("m4a") => "audio/mp4",
+        Some("mp4") => "audio/mp4",
+        Some("wav") => "audio/wav",
+        Some("webm") => "audio/webm",
+        Some("ogg") => "audio/ogg",
+        Some("flac") => "audio/flac",
+        _ => "application/octet-stream",
+    }
 }
 
 fn sanitize_file_stem(input: &str) -> String {
@@ -186,7 +242,8 @@ fn unique_markdown_path(export_dir: &Path, file_stem: &str) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use super::{provider_key_account, sanitize_file_stem};
+    use super::{audio_mime_type, provider_key_account, sanitize_file_stem};
+    use std::path::Path;
 
     #[test]
     fn sanitizes_export_file_names() {
@@ -207,6 +264,16 @@ mod tests {
         assert_eq!(
             provider_key_account("bad/provider"),
             "provider:bad_provider"
+        );
+    }
+
+    #[test]
+    fn resolves_audio_mime_types_from_extensions() {
+        assert_eq!(audio_mime_type(Path::new("call.wav")), "audio/wav");
+        assert_eq!(audio_mime_type(Path::new("call.MP3")), "audio/mpeg");
+        assert_eq!(
+            audio_mime_type(Path::new("call.unknown")),
+            "application/octet-stream"
         );
     }
 }
