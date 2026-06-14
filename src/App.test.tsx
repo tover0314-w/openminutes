@@ -27,6 +27,20 @@ describe('App', () => {
     expect(screen.getByRole('complementary', { name: /original transcript/i })).toBeInTheDocument()
   })
 
+  it('highlights user notes and markers in Review', async () => {
+    const user = userEvent.setup()
+    render(<App />)
+    const nav = screen.getByRole('navigation', { name: /main navigation/i })
+
+    await user.click(within(nav).getByRole('button', { name: /^meeting$/i }))
+    await user.click(screen.getByRole('button', { name: /stop recording from meeting/i }))
+
+    const sourceContext = screen.getByRole('region', { name: /user recorded context/i })
+    expect(within(sourceContext).getByText(/user notes/i)).toBeInTheDocument()
+    expect(within(sourceContext).getAllByText(/ship macos-first/i).length).toBeGreaterThan(0)
+    expect(within(sourceContext).getByText(/prototype focus and review modes/i)).toBeInTheDocument()
+  })
+
   it('keeps Settings as a two-column preferences view', async () => {
     const user = userEvent.setup()
     render(<App />)
@@ -155,6 +169,29 @@ describe('App', () => {
         Boolean(node?.tagName === 'PRE' && node.textContent?.includes('Edited source transcript line.')),
       ),
     ).toBeInTheDocument()
+  })
+
+  it('can add and delete original transcript lines in Review', async () => {
+    const user = userEvent.setup()
+    render(<App />)
+    const nav = screen.getByRole('navigation', { name: /main navigation/i })
+
+    await user.click(within(nav).getByRole('button', { name: /^meeting$/i }))
+    await user.click(screen.getByRole('button', { name: /stop recording from meeting/i }))
+
+    await user.click(screen.getByRole('button', { name: /add line/i }))
+    const addedLine = screen.getByRole('textbox', { name: /transcript text 5/i })
+    await user.type(addedLine, 'Added missing transcript line.')
+
+    await user.click(screen.getByRole('button', { name: /delete transcript line 1/i }))
+    await user.click(screen.getByText(/generation context/i))
+
+    expect(
+      screen.getByText((_, node) =>
+        Boolean(node?.tagName === 'PRE' && node.textContent?.includes('Added missing transcript line.')),
+      ),
+    ).toBeInTheDocument()
+    expect(screen.queryByDisplayValue(/I think the meeting product should stay separate first/i)).not.toBeInTheDocument()
   })
 
   it('copies Review AI Notes as Markdown', async () => {

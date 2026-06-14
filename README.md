@@ -29,6 +29,7 @@ Implemented foundation:
 - Editable original transcript source lines in Review.
 - Native desktop audio file picker with browser fallback for testing STT before native capture.
 - Retry affordance for failed audio import/STT setup.
+- Add/delete controls for original transcript source lines.
 - Review generate/regenerate failure states that preserve existing AI Notes.
 - Markdown formatting for AI Notes export.
 - Copy Markdown action in the Review workspace.
@@ -47,6 +48,10 @@ Focus keeps manual notes in the main pane and the live transcript on the right:
 Review turns the meeting into AI Notes, with the original transcript kept as source:
 
 ![OpenMinutes Review](output/playwright/openminutes-review.png)
+
+Review reads like a document while emphasizing user notes and markers as source signals:
+
+![OpenMinutes Review Document Notes](output/playwright/openminutes-review-document-notes.png)
 
 Settings keeps the OpenTypeless-compatible two-column desktop preference layout:
 
@@ -71,6 +76,10 @@ Imported audio uses the STT provider path and surfaces configuration errors:
 Original transcript lines are editable in Review:
 
 ![OpenMinutes Editable Transcript](output/playwright/openminutes-editable-transcript.png)
+
+Transcript source lines can be added or removed during Review:
+
+![OpenMinutes Transcript Line Controls](output/playwright/openminutes-transcript-line-controls.png)
 
 Failed audio imports can be retried after configuration is fixed:
 

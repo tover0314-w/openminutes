@@ -779,6 +779,7 @@ function AiNotesPane({
               <span>{generationErrorMessage}</span>
             </div>
           ) : null}
+          <ReviewSourceHighlights meeting={meeting} />
           <AiSection title="Summary">
             <AiTextArea
               label="AI summary"
@@ -864,6 +865,34 @@ function AiNotesPane({
   )
 }
 
+function ReviewSourceHighlights({ meeting }: { meeting: Meeting }) {
+  const manualNotes = meeting.manualNotes.trim()
+  const hasSourceHighlights = manualNotes || meeting.markers.length > 0
+
+  if (!hasSourceHighlights) return null
+
+  return (
+    <section className="review-source" aria-label="User recorded context">
+      <div className="review-source-header">
+        <strong>User Notes</strong>
+        <span>{meeting.markers.length} markers</span>
+      </div>
+      {manualNotes ? <p className="review-source-notes">{manualNotes}</p> : null}
+      {meeting.markers.length ? (
+        <div className="review-marker-list" aria-label="User markers">
+          {meeting.markers.map((marker) => (
+            <div className="review-marker" key={marker.id}>
+              <span>{marker.kind}</span>
+              <time>{marker.time}</time>
+              <p>{marker.text}</p>
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </section>
+  )
+}
+
 function TranscriptPane({
   title,
   subtitle,
@@ -886,6 +915,21 @@ function TranscriptPane({
       ),
     )
   }
+  const addLine = () => {
+    const lastLine = meeting.transcript.at(-1)
+    onUpdateTranscript?.([
+      ...meeting.transcript,
+      {
+        id: `${meeting.id}-manual-transcript-${Date.now()}`,
+        time: nextTranscriptTime(lastLine?.time),
+        speaker: lastLine?.speaker || 'Speaker',
+        text: '',
+      },
+    ])
+  }
+  const deleteLine = (index: number) => {
+    onUpdateTranscript?.(meeting.transcript.filter((_, lineIndex) => lineIndex !== index))
+  }
 
   return (
     <aside className="pane jelly-card transcript-pane" aria-label={title}>
@@ -905,10 +949,17 @@ function TranscriptPane({
                 <textarea
                   className="transcript-textarea"
                   aria-label={`Transcript text ${index + 1}`}
-                  rows={2}
+                  rows={autoRows(line.text, 2, 34)}
                   value={line.text}
                   onChange={(event) => updateLine(index, { text: event.target.value })}
                 />
+                <button
+                  className="transcript-delete"
+                  aria-label={`Delete transcript line ${index + 1}`}
+                  onClick={() => deleteLine(index)}
+                >
+                  Delete
+                </button>
               </div>
             </div>
           ) : (
@@ -921,6 +972,11 @@ function TranscriptPane({
           ),
         )}
       </div>
+      {editable ? (
+        <div className="transcript-actions">
+          <button onClick={addLine}>Add Line</button>
+        </div>
+      ) : null}
     </aside>
   )
 }
@@ -1285,11 +1341,13 @@ function AiTextArea({
   onChange: (value: string) => void
   onBlur?: () => void
 }) {
+  const effectiveRows = autoRows(value, rows, 72)
+
   return (
     <textarea
       className="ai-edit-field"
       aria-label={label}
-      rows={rows}
+      rows={effectiveRows}
       value={value}
       onChange={(event) => onChange(event.target.value)}
       onBlur={onBlur}
@@ -1321,14 +1379,16 @@ function EditableStringListSection({
     <AiSection title={title}>
       <div className="editable-list">
         {visibleItems.map((item, index) => (
-          <AiTextArea
-            key={`${itemLabel}-${index}`}
-            label={`${itemLabel} ${index + 1}`}
-            value={item}
-            rows={1}
-            onChange={(value) => updateItem(index, value)}
-            onBlur={compactItems}
-          />
+          <div className="document-list-row" key={`${itemLabel}-${index}`}>
+            <span className="document-bullet" aria-hidden="true" />
+            <AiTextArea
+              label={`${itemLabel} ${index + 1}`}
+              value={item}
+              rows={1}
+              onChange={(value) => updateItem(index, value)}
+              onBlur={compactItems}
+            />
+          </div>
         ))}
         <button className="inline-add" onClick={() => onChange([...items, ''])}>
           Add
@@ -1366,7 +1426,8 @@ function EditableActionItemsSection({
     <AiSection title="Action Items">
       <div className="editable-list">
         {visibleItems.map((item, index) => (
-          <div className="action-edit-row" key={item.id || `action-${index}`}>
+          <div className="action-edit-row document-list-row" key={item.id || `action-${index}`}>
+            <span className="document-bullet" aria-hidden="true" />
             <AiTextArea
               label={`Action item ${index + 1}`}
               value={item.text}
@@ -1412,9 +1473,25 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : 'Unknown error.'
 }
 
+function autoRows(value: string, minimum: number, charsPerLine: number): number {
+  const hardLines = value.split('\n').length
+  const softLines = Math.ceil(value.length / charsPerLine)
+  return Math.max(minimum, hardLines, softLines || 1)
+}
+
 function audioTitleFromFileName(fileName: string): string {
   const withoutExtension = fileName.replace(/\.[^/.]+$/, '').trim()
   return withoutExtension || 'Imported audio'
+}
+
+function nextTranscriptTime(time?: string): string {
+  const [minutes = '0', seconds = '0'] = time?.split(':') ?? []
+  const totalSeconds = Number(minutes) * 60 + Number(seconds) + 30
+  if (!Number.isFinite(totalSeconds)) return '00:30'
+
+  const nextMinutes = Math.floor(totalSeconds / 60)
+  const nextSeconds = totalSeconds % 60
+  return `${nextMinutes.toString().padStart(2, '0')}:${nextSeconds.toString().padStart(2, '0')}`
 }
 
 function FieldGroup({ label, children }: { label: string; children: React.ReactNode }) {

@@ -1358,7 +1358,7 @@ Tradeoff:
 
 The current native import reads the selected file into memory and passes bytes over IPC. This is acceptable for the current STT import foundation and protected by a 100 MB cap. A production recording workflow should stream or upload from Rust directly instead of passing large files through frontend IPC.
 
-Still intentionally not completed:
+Still intentionally not completed after the ninth push:
 
 1. Native microphone capture.
 2. Native system audio capture.
@@ -1366,11 +1366,63 @@ Still intentionally not completed:
 4. Transcript line add/delete controls.
 5. Local/offline mock audio import mode.
 
-Next recommended slice:
+Next recommended slice after the ninth push:
 
 1. Add transcript line add/delete controls.
 2. Add local/offline mock audio import mode for demos.
 3. Start native microphone capture only after import/edit/retry workflows feel stable.
+
+### 15.14 Implementation Slice 10: Transcript Line Structure Editing
+
+Completed in the tenth push:
+
+1. Added `Add Line` control to Review's Original Transcript inspector.
+2. Added per-line delete control for editable transcript lines.
+3. New manual transcript lines inherit the previous speaker when possible.
+4. New manual transcript lines default to 30 seconds after the previous line.
+5. Deleted transcript lines are removed from the AI generation context.
+6. Added UI tests proving:
+   - A missing transcript line can be added.
+   - A mistaken transcript line can be deleted.
+   - AI generation context reflects the updated transcript structure.
+
+Still intentionally not completed:
+
+1. Editing transcript timestamps directly.
+2. Reordering transcript lines.
+3. Speaker merge/rename across the whole transcript.
+4. Local/offline mock audio import mode.
+
+Next recommended slice:
+
+1. Add local/offline mock audio import mode for demos without provider keys.
+2. Add speaker rename across all transcript lines.
+3. Add timestamp editing only if source trust/review requires it.
+
+### 15.15 Implementation Slice 11: Review Document UX Correction
+
+Completed in the eleventh push:
+
+1. Changed Review's AI Notes from form-like fields to document-like editable text.
+2. Kept direct editing behavior, but removed heavy input backgrounds, inset shadows, and resize handles.
+3. Added automatic text row sizing so long AI Notes and transcript lines read like content instead of clipped form controls.
+4. Added a `User Notes` source highlight block above AI Notes:
+   - Manual notes are shown as high-priority user context.
+   - Meeting markers are shown as compact emphasized signals.
+   - User-recorded context remains visually distinct from AI-generated notes.
+5. Changed editable original transcript rows to look like transcript source text with light hover/focus affordances.
+6. Added a UI test proving user notes and markers are visible in Review outside the hidden generation context.
+
+Product rule clarified:
+
+Review is a finished meeting-notes document first. Editing is available, but the default visual language should be reading, reviewing, and copying, not filling out a form.
+
+Still intentionally not completed:
+
+1. Rich-text editing.
+2. Source-to-output citation linking.
+3. Collapsible source highlights for very long meetings.
+4. Full transcript speaker merge/rename.
 
 ## 16. Open Questions
 
