@@ -291,6 +291,36 @@ describe('App', () => {
 
     expect(writeText).toHaveBeenCalledWith(expect.stringContaining('# Product sync with Alex'))
     expect(writeText).toHaveBeenCalledWith(expect.stringContaining('## Summary'))
+    expect(writeText).toHaveBeenCalledWith(
+      expect.stringContaining(
+        '_Sources: 10:06 Alex - During recording, show transcript. AI Notes come after stop.',
+      ),
+    )
     expect(screen.getByRole('button', { name: /copied/i })).toBeInTheDocument()
+  })
+
+  it('honors the export setting for including transcript in copied Markdown', async () => {
+    const user = userEvent.setup()
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.defineProperty(globalThis.navigator, 'clipboard', {
+      value: { writeText },
+      configurable: true,
+    })
+
+    render(<App />)
+
+    await user.click(screen.getByRole('button', { name: /settings/i }))
+    await user.click(screen.getByRole('button', { name: /exports/i }))
+    await user.click(screen.getByRole('switch', { name: /include transcript/i }))
+
+    const nav = screen.getByRole('navigation', { name: /main navigation/i })
+    await user.click(within(nav).getByRole('button', { name: /^meeting$/i }))
+    await user.click(screen.getByRole('button', { name: /stop recording from meeting/i }))
+    await user.click(screen.getByRole('button', { name: /copy markdown/i }))
+
+    expect(writeText).toHaveBeenCalledWith(expect.stringContaining('## Original Transcript'))
+    expect(writeText).toHaveBeenCalledWith(
+      expect.stringContaining('10:06 Alex: During recording, show transcript. AI Notes come after stop.'),
+    )
   })
 })

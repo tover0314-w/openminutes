@@ -1508,10 +1508,9 @@ Still intentionally not completed:
 
 1. Model-generated structured citations.
 2. Citation confidence display.
-3. Citation export into Markdown.
-4. Native microphone capture.
-5. Native system audio capture.
-6. Streamed audio upload from Rust.
+3. Native microphone capture.
+4. Native system audio capture.
+5. Streamed audio upload from Rust.
 
 ### 15.19 Implementation Slice 15: Review Reading Mode Hardening
 
@@ -1539,7 +1538,36 @@ Still intentionally not completed:
 1. Rich-text editing.
 2. Per-paragraph inline edit affordances.
 3. Collapsible long user-note source blocks.
-4. Citation export into Markdown.
+
+### 15.20 Implementation Slice 16: Markdown Source Citation Export
+
+Completed in the sixteenth push:
+
+1. Moved transcript citation matching into a shared domain helper.
+2. Kept Review source citation chips and Markdown export on the same deterministic matching logic.
+3. Added source lines to exported Markdown by default:
+   - Summary and follow-up draft receive paragraph-level source lines.
+   - Decisions, action items, open questions, and key points receive nested source lines.
+   - Source lines include timestamp, speaker, and original transcript text.
+4. Added `includeCitations: false` for clean Markdown exports when citations are not desired.
+5. Wired the existing `Include transcript` export setting into Copy Markdown and Save Markdown.
+6. Added tests proving:
+   - Markdown exports include citation sources by default.
+   - Citations can be omitted by option.
+   - Copy Markdown includes citation sources.
+   - Copy Markdown honors the `Include transcript` export setting.
+
+Product rule clarified:
+
+If Review shows source traceability, exported Markdown should preserve that traceability. Source citations are part of the meeting artifact, not just a temporary UI affordance.
+
+Still intentionally not completed:
+
+1. Model-generated structured citations.
+2. Citation confidence display.
+3. Rich-text export.
+4. Native microphone capture.
+5. Native system audio capture.
 
 ## 16. Open Questions
 

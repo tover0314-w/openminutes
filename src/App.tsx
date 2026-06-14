@@ -26,6 +26,7 @@ import { exportMarkdownFile } from './desktop/markdownExport'
 import { createTauriMeetingRepository } from './desktop/meetingRepository'
 import { createTauriAppSettingsRepository } from './desktop/settingsRepository'
 import { isTauriRuntime } from './desktop/tauri'
+import { findTranscriptCitations, type TranscriptCitation } from './domain/citations'
 import { formatMeetingMarkdown } from './domain/markdown'
 import {
   createAiNotesProvider,
@@ -300,7 +301,9 @@ export function App() {
   }
 
   const copyMarkdown = async () => {
-    const markdown = formatMeetingMarkdown(meeting)
+    const markdown = formatMeetingMarkdown(meeting, {
+      includeTranscript: appSettings.includeTranscriptInExport,
+    })
 
     try {
       if (globalThis.navigator?.clipboard?.writeText) {
@@ -317,7 +320,9 @@ export function App() {
   }
 
   const saveMarkdown = async () => {
-    const markdown = formatMeetingMarkdown(meeting)
+    const markdown = formatMeetingMarkdown(meeting, {
+      includeTranscript: appSettings.includeTranscriptInExport,
+    })
 
     try {
       const result = await exportMarkdownFile(meeting.title, markdown)
@@ -1469,16 +1474,11 @@ function ModeSwitch({ active }: { active: 'focus' | 'review' }) {
   )
 }
 
-interface SourceCitation {
-  line: TranscriptLine
-  score: number
-}
-
 function SourceCitations({
   citations,
   onSelect,
 }: {
-  citations: SourceCitation[]
+  citations: TranscriptCitation[]
   onSelect?: (lineId: string) => void
 }) {
   if (!citations.length || !onSelect) return null
@@ -1748,52 +1748,6 @@ function autoRows(value: string, minimum: number, charsPerLine: number): number 
   return Math.max(minimum, hardLines, softLines || 1)
 }
 
-function findTranscriptCitations(
-  transcript: TranscriptLine[],
-  text: string,
-  limit = 2,
-): SourceCitation[] {
-  const textTokens = keywordTokens(text)
-  if (!textTokens.size) return []
-
-  return transcript
-    .map((line) => {
-      const lineTokens = keywordTokens(`${line.speaker} ${line.text}`)
-      const overlap = Array.from(textTokens).filter((token) => lineTokens.has(token)).length
-      const score = overlap / Math.max(textTokens.size, 1)
-      return { line, score }
-    })
-    .filter((citation) => citation.score >= 0.16)
-    .sort((left, right) => right.score - left.score)
-    .slice(0, limit)
-}
-
-const citationStopWords = new Set([
-  'about',
-  'after',
-  'before',
-  'during',
-  'from',
-  'into',
-  'notes',
-  'should',
-  'that',
-  'their',
-  'there',
-  'this',
-  'with',
-])
-
-function keywordTokens(text: string): Set<string> {
-  return new Set(
-    text
-      .toLowerCase()
-      .replace(/[^a-z0-9\s-]/g, ' ')
-      .split(/\s+/)
-      .map((token) => token.trim())
-      .filter((token) => token.length > 3 && !citationStopWords.has(token)),
-  )
-}
 
 function uniqueTranscriptSpeakers(transcript: TranscriptLine[]): string[] {
   return Array.from(new Set(transcript.map((line) => normalizeSpeakerName(line.speaker))))

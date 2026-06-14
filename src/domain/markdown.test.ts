@@ -9,7 +9,20 @@ describe('formatMeetingMarkdown', () => {
     expect(markdown).toContain('# Product sync with Alex')
     expect(markdown).toContain('## Summary')
     expect(markdown).toContain('- [ ] Implement the token-compatible desktop meeting shell. (Tov)')
+    expect(markdown).toContain(
+      '_Sources: 10:06 Alex - During recording, show transcript. AI Notes come after stop.',
+    )
     expect(markdown).not.toContain('## Original Transcript')
+  })
+
+  it('can omit source citations when requested', () => {
+    const markdown = formatMeetingMarkdown(createDemoMeeting('ready'), {
+      includeCitations: false,
+    })
+
+    expect(markdown).toContain('- Show realtime transcript during recording and AI Notes after stop.')
+    expect(markdown).not.toContain('_Sources:')
+    expect(markdown).not.toContain('_Source:')
   })
 
   it('can include original transcript when requested', () => {

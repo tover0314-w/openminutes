@@ -33,6 +33,7 @@ Implemented foundation:
 - Add/delete controls for original transcript source lines.
 - Speaker rename/merge controls for original transcript source lines.
 - Source citation chips from AI Notes back to original transcript lines.
+- Markdown export includes source citations and can include the full transcript.
 - Review generate/regenerate failure states that preserve existing AI Notes.
 - Markdown formatting for AI Notes export.
 - Copy Markdown action in the Review workspace.
