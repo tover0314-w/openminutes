@@ -1,5 +1,7 @@
+mod audio_capture;
 mod storage;
 
+use audio_capture::{AudioCaptureManager, AudioCaptureStatus, CapturedAudioFile};
 use keyring::{Entry, Error as KeyringError};
 use serde::Serialize;
 use serde_json::Value;
@@ -7,7 +9,7 @@ use std::{
     fs,
     path::{Path, PathBuf},
 };
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Manager, State};
 
 const KEYCHAIN_SERVICE: &str = "OpenMinutes";
 const MAX_AUDIO_IMPORT_BYTES: u64 = 100 * 1024 * 1024;
@@ -145,8 +147,30 @@ fn export_meeting_markdown(
     })
 }
 
+#[tauri::command]
+fn start_audio_capture(
+    app: AppHandle,
+    state: State<'_, AudioCaptureManager>,
+    meeting_id: String,
+) -> Result<AudioCaptureStatus, String> {
+    state.start(&app, &meeting_id)
+}
+
+#[tauri::command]
+fn stop_audio_capture(state: State<'_, AudioCaptureManager>) -> Result<CapturedAudioFile, String> {
+    state.stop()
+}
+
+#[tauri::command]
+fn audio_capture_status(
+    state: State<'_, AudioCaptureManager>,
+) -> Result<AudioCaptureStatus, String> {
+    state.status()
+}
+
 pub fn run() {
     tauri::Builder::default()
+        .manage(AudioCaptureManager::default())
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             app_version,
@@ -161,6 +185,9 @@ pub fn run() {
             delete_provider_api_key,
             read_audio_import_file,
             export_meeting_markdown,
+            start_audio_capture,
+            stop_audio_capture,
+            audio_capture_status,
         ])
         .run(tauri::generate_context!())
         .expect("error while running OpenMinutes")

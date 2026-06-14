@@ -21,6 +21,7 @@ import {
 } from './domain/meeting'
 import { type ApiKeyRepository, createMemoryApiKeyRepository } from './domain/apiKey'
 import { createTauriApiKeyRepository } from './desktop/apiKeyRepository'
+import { createTauriAudioCaptureSession } from './desktop/audioCapture'
 import { selectTauriAudioFile } from './desktop/audioImport'
 import { exportMarkdownFile } from './desktop/markdownExport'
 import { createTauriMeetingRepository } from './desktop/meetingRepository'
@@ -52,6 +53,7 @@ interface AudioImportRequest {
   meetingId: string
   title: string
   file: File
+  baseMeeting?: Meeting
 }
 
 const navItems = [
@@ -122,17 +124,63 @@ export function App() {
     setAppSettings((current) => ({ ...current, ...patch }))
   }
 
-  const startMeeting = () => {
-    setMeeting(createDemoMeeting('recording'))
+  const startMeeting = async () => {
+    const recordingMeeting = createDemoMeeting('recording')
+    setMeeting(recordingMeeting)
     setTranscriptionStatus('idle')
     setTranscriptionError('')
     setLastAudioImport(undefined)
     setAiGenerationStatus('idle')
     setAiGenerationError('')
     setRoute('meeting')
+
+    try {
+      const captureSession = await createTauriAudioCaptureSession()
+      await captureSession?.start(recordingMeeting.id)
+    } catch (error) {
+      setMeeting((current) =>
+        current.id === recordingMeeting.id
+          ? {
+              ...current,
+              phase: 'error',
+            }
+          : current,
+      )
+      setTranscriptionStatus('error')
+      setTranscriptionError(errorMessage(error))
+    }
   }
 
-  const stopRecording = () => {
+  const stopRecording = async () => {
+    if (isTauriRuntime()) {
+      try {
+        const captureSession = await createTauriAudioCaptureSession()
+        if (captureSession) {
+          const file = await captureSession.stop()
+          const request = {
+            meetingId: meeting.id,
+            title: meeting.title,
+            file,
+            baseMeeting: meeting,
+          }
+          setLastAudioImport(request)
+          await transcribeAudioImport(request)
+          return
+        }
+      } catch (error) {
+        if (!isNoActiveAudioCaptureError(error)) {
+          setMeeting((current) => ({
+            ...current,
+            phase: 'error',
+          }))
+          setTranscriptionStatus('error')
+          setTranscriptionError(errorMessage(error))
+          setRoute('meeting')
+          return
+        }
+      }
+    }
+
     setMeeting((current) => ({
       ...createDemoMeeting('ready'),
       manualNotes: current.manualNotes,
@@ -201,17 +249,24 @@ export function App() {
   }
 
   const transcribeAudioImport = async (request: AudioImportRequest) => {
-    const importedMeeting: Meeting = {
-      ...createDemoMeeting('finalizing_transcript'),
-      id: request.meetingId,
-      title: request.title,
-      duration: '00:00',
-      phase: 'finalizing_transcript',
-      manualNotes: '',
-      markers: [],
-      transcript: [],
-      aiNotes: undefined,
-    }
+    const importedMeeting: Meeting = request.baseMeeting
+      ? {
+          ...request.baseMeeting,
+          phase: 'finalizing_transcript',
+          transcript: [],
+          aiNotes: undefined,
+        }
+      : {
+          ...createDemoMeeting('finalizing_transcript'),
+          id: request.meetingId,
+          title: request.title,
+          duration: '00:00',
+          phase: 'finalizing_transcript',
+          manualNotes: '',
+          markers: [],
+          transcript: [],
+          aiNotes: undefined,
+        }
 
     setRoute('meeting')
     setMeeting(importedMeeting)
@@ -597,7 +652,7 @@ function MeetingPage({
 }: {
   meeting: Meeting
   view: ReturnType<typeof getMeetingViewModel>
-  onStopRecording: () => void
+  onStopRecording: () => void | Promise<void>
   onRegenerate: () => void | Promise<void>
   onCopyMarkdown: () => void
   onSaveMarkdown: () => void
@@ -658,7 +713,7 @@ function ManualNotesPane({
   onStopRecording,
 }: {
   meeting: Meeting
-  onStopRecording: () => void
+  onStopRecording: () => void | Promise<void>
 }) {
   return (
     <div className="pane jelly-card">
@@ -1742,6 +1797,10 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : 'Unknown error.'
 }
 
+function isNoActiveAudioCaptureError(error: unknown): boolean {
+  return errorMessage(error).toLowerCase().includes('no active microphone recording')
+}
+
 function autoRows(value: string, minimum: number, charsPerLine: number): number {
   const hardLines = value.split('\n').length
   const softLines = Math.ceil(value.length / charsPerLine)
@@ -1873,7 +1932,7 @@ function FloatingCapsule({
 }: {
   phase: MeetingPhase
   duration: string
-  onStop: () => void
+  onStop: () => void | Promise<void>
 }) {
   const recording = phase === 'recording'
 

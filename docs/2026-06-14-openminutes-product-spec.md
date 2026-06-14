@@ -1588,6 +1588,37 @@ Still intentionally not completed:
 3. Native microphone capture.
 4. Native system audio capture.
 
+### 15.22 Implementation Slice 18: Native Microphone Capture Foundation
+
+Completed in the eighteenth push:
+
+1. Added a native microphone capture module in the Tauri shell.
+2. Used `cpal` to open the default input device and `hound` to write 16-bit WAV output.
+3. Kept the CoreAudio stream on a dedicated capture actor thread because macOS `cpal::Stream` is not `Send`/`Sync`.
+4. Added Tauri commands:
+   - `start_audio_capture`
+   - `stop_audio_capture`
+   - `audio_capture_status`
+5. Returned stopped recordings as WAV payloads that can reuse the existing STT provider path.
+6. Added `NSMicrophoneUsageDescription` for macOS microphone permission prompts.
+7. Wired desktop Start Meeting to start native microphone capture when running in Tauri.
+8. Wired desktop Stop Recording to stop native capture and send the recorded WAV through transcription.
+9. Kept browser/dev test behavior on the existing deterministic demo path.
+10. Added frontend and Rust tests for the capture command boundary and file naming.
+
+Product rule clarified:
+
+Microphone capture should land before system audio. It proves the desktop capture boundary, permission prompt, temporary WAV persistence, and STT handoff without taking on ScreenCaptureKit mixing in the same slice.
+
+Still intentionally not completed:
+
+1. Live streaming transcript updates while recording.
+2. System audio capture with ScreenCaptureKit.
+3. Mic + system audio mixing.
+4. Automatic cleanup policy for temporary recording files.
+5. Native audio device picker.
+6. Signed/notarized microphone permission QA.
+
 ## 16. Open Questions
 
 1. Final product name: OpenMinutes or another name?

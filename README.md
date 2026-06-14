@@ -30,6 +30,7 @@ Implemented foundation:
 - Editable AI Notes in Review, including key points and action item owners.
 - Editable original transcript source lines in Review.
 - Native desktop audio file picker with browser fallback for testing STT before native capture.
+- Native microphone capture foundation that records WAV files through the Tauri shell on desktop.
 - Retry affordance for failed audio import/STT setup.
 - Add/delete controls for original transcript source lines.
 - Speaker rename/merge controls for original transcript source lines.
