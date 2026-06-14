@@ -789,25 +789,24 @@ Suggested SQLite tables:
 
 Current implementation status:
 
-1. A JSON-backed `MeetingRepository` exists for the first desktop scaffold.
+1. A SQLite-backed Tauri meeting repository exists for the desktop scaffold.
 2. Browser development and tests use localStorage through the repository contract.
-3. Desktop runtime uses Tauri commands to store complete meeting objects in the app data directory.
+3. Desktop runtime uses Tauri commands to store meeting records in `openminutes.sqlite3` in the app data directory.
 4. This is intentionally a bridge implementation, not the final normalized storage layer.
-5. The final desktop implementation should replace the JSON file with Tauri commands backed by SQLite using the tables below.
+5. The current SQLite table stores indexed metadata plus complete `raw_json` meeting content.
 6. UI code should depend on the repository contract, not on localStorage, raw Tauri invoke calls, or SQLite directly.
+7. The final desktop implementation should split raw meeting JSON into normalized tables using the tables below.
 
 ### meetings
 
 ```sql
 id TEXT PRIMARY KEY;
 title TEXT NOT NULL;
-template_id TEXT NOT NULL;
+template TEXT NOT NULL;
 status TEXT NOT NULL;
 started_at TEXT;
-ended_at TEXT;
-duration_seconds INTEGER;
-created_at TEXT NOT NULL;
 updated_at TEXT NOT NULL;
+raw_json TEXT NOT NULL;
 ```
 
 ### meeting_notes
@@ -1060,7 +1059,7 @@ Completed in the second push:
 
 Still intentionally not completed:
 
-1. Real SQLite storage.
+1. Normalized SQLite storage.
 2. Real microphone/system audio capture.
 3. Real OpenAI/Groq/Ollama provider calls.
 4. File save dialog and local Markdown file export.
@@ -1097,7 +1096,7 @@ Completed in the third push:
 
 Still intentionally not completed:
 
-1. SQLite migrations and normalized tables.
+1. Normalized SQLite tables.
 2. OS keychain storage for provider credentials.
 3. Real provider HTTP calls.
 4. Native save dialog.
@@ -1105,11 +1104,39 @@ Still intentionally not completed:
 
 Next recommended slice:
 
-1. Add SQLite dependency and migration runner.
-2. Replace the JSON app data file with SQLite tables.
-3. Add a settings repository for provider configuration.
-4. Store provider secrets through the OS keychain.
+1. Add a settings repository for provider configuration.
+2. Store provider secrets through the OS keychain.
+3. Normalize meetings into separate note, marker, transcript, and AI output tables.
+4. Add a native save dialog.
 5. Add the first real OpenAI-compatible provider adapter behind the existing provider interface.
+
+### 15.8 Implementation Slice 4: SQLite Persistence
+
+Completed in the fourth push:
+
+1. Added `rusqlite` with bundled SQLite.
+2. Added `src-tauri/src/storage.rs`.
+3. Added `openminutes.sqlite3` as the desktop app data store.
+4. Added a schema migration table.
+5. Added first migration for `meetings`.
+6. Rewired existing Tauri commands to SQLite:
+   - `load_meetings`
+   - `save_meeting`
+   - `delete_meeting`
+7. Kept the front-end repository boundary unchanged.
+8. Added Rust tests for save/update/load/delete and missing ids.
+
+Storage tradeoff:
+
+The current SQLite schema stores indexed metadata plus full meeting `raw_json`. This is deliberate. It moves the app off ad hoc JSON files while preserving rapid schema evolution. The next storage slice should normalize transcript lines, markers, AI Notes, and action items into separate tables.
+
+Still intentionally not completed:
+
+1. Settings persistence.
+2. Keychain-backed provider secrets.
+3. Normalized meeting artifacts.
+4. Data migration from the previous `meetings.json` bridge file.
+5. Real provider calls.
 
 ## 16. Open Questions
 
