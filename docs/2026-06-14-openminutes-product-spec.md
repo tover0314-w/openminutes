@@ -1569,6 +1569,25 @@ Still intentionally not completed:
 4. Native microphone capture.
 5. Native system audio capture.
 
+### 15.21 Implementation Slice 17: macOS Bundle Identifier Hygiene
+
+Completed in the seventeenth push:
+
+1. Changed the Tauri bundle identifier from `com.openminutes.app` to `com.openminutes.desktop`.
+2. Removed the macOS packaging warning caused by ending the identifier with `.app`.
+3. Kept the identifier in reverse-DNS form for future signing/notarization work.
+
+Product rule clarified:
+
+Desktop release hygiene matters before native capture grows more complex. The app should not carry avoidable macOS packaging warnings into signed builds.
+
+Still intentionally not completed:
+
+1. Bundle signing and notarization.
+2. App data migration between early internal bundle identifiers.
+3. Native microphone capture.
+4. Native system audio capture.
+
 ## 16. Open Questions
 
 1. Final product name: OpenMinutes or another name?

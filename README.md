@@ -23,6 +23,7 @@ Implemented foundation:
 - Provider interfaces for transcription and AI Notes generation.
 - Mock STT and AI Notes providers for local development and tests.
 - OS keychain-backed provider API key commands in the desktop shell.
+- macOS-safe Tauri bundle identifier for warning-free desktop packaging.
 - OpenAI-compatible AI Notes provider adapter behind the provider boundary.
 - OpenAI-compatible STT provider adapter for imported audio files.
 - Explicit local demo modes for STT import and AI Notes generation without provider keys.
