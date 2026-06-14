@@ -36,6 +36,7 @@ pub struct CapturedAudioFile {
     mime_type: String,
     bytes: Vec<u8>,
     duration_millis: u128,
+    retained: bool,
 }
 
 pub struct AudioCaptureManager {
@@ -58,6 +59,7 @@ enum CaptureCommand {
         response: mpsc::Sender<Result<AudioCaptureStatus, String>>,
     },
     Stop {
+        keep_file: bool,
         response: mpsc::Sender<Result<CapturedAudioFile, String>>,
     },
     Status {
@@ -84,8 +86,11 @@ impl AudioCaptureManager {
         })
     }
 
-    pub fn stop(&self) -> Result<CapturedAudioFile, String> {
-        send_capture_command(&self.sender, |response| CaptureCommand::Stop { response })
+    pub fn stop(&self, keep_file: bool) -> Result<CapturedAudioFile, String> {
+        send_capture_command(&self.sender, |response| CaptureCommand::Stop {
+            keep_file,
+            response,
+        })
     }
 
     pub fn status(&self) -> Result<AudioCaptureStatus, String> {
@@ -105,8 +110,11 @@ fn run_capture_actor(receiver: mpsc::Receiver<CaptureCommand>) {
             } => {
                 let _ = response.send(start_capture(&mut active, capture_dir, &meeting_id));
             }
-            CaptureCommand::Stop { response } => {
-                let _ = response.send(stop_capture(&mut active));
+            CaptureCommand::Stop {
+                keep_file,
+                response,
+            } => {
+                let _ = response.send(stop_capture(&mut active, keep_file));
             }
             CaptureCommand::Status { response } => {
                 let _ = response.send(Ok(capture_status(active.as_ref())));
@@ -198,7 +206,10 @@ fn start_capture(
     Ok(capture_status(active.as_ref()))
 }
 
-fn stop_capture(active: &mut Option<ActiveCapture>) -> Result<CapturedAudioFile, String> {
+fn stop_capture(
+    active: &mut Option<ActiveCapture>,
+    keep_file: bool,
+) -> Result<CapturedAudioFile, String> {
     let active = active
         .take()
         .ok_or_else(|| "No active microphone recording was found.".to_string())?;
@@ -208,7 +219,15 @@ fn stop_capture(active: &mut Option<ActiveCapture>) -> Result<CapturedAudioFile,
     drop(active.stream);
     finalize_wav_writer(&active.writer)?;
 
-    let metadata = fs::metadata(&output_path)
+    read_captured_audio_file(&output_path, duration_millis, keep_file)
+}
+
+fn read_captured_audio_file(
+    output_path: &Path,
+    duration_millis: u128,
+    keep_file: bool,
+) -> Result<CapturedAudioFile, String> {
+    let metadata = fs::metadata(output_path)
         .map_err(|error| format!("Could not read microphone recording metadata: {error}"))?;
     if metadata.len() > CAPTURE_READ_LIMIT_BYTES {
         return Err(format!(
@@ -217,13 +236,17 @@ fn stop_capture(active: &mut Option<ActiveCapture>) -> Result<CapturedAudioFile,
         ));
     }
 
-    let bytes = fs::read(&output_path)
+    let bytes = fs::read(output_path)
         .map_err(|error| format!("Could not read microphone recording: {error}"))?;
     let file_name = output_path
         .file_name()
         .and_then(|name| name.to_str())
         .unwrap_or("meeting-recording.wav")
         .to_string();
+    if !keep_file {
+        fs::remove_file(output_path)
+            .map_err(|error| format!("Could not remove temporary microphone recording: {error}"))?;
+    }
 
     Ok(CapturedAudioFile {
         path: output_path.to_string_lossy().into_owned(),
@@ -231,6 +254,7 @@ fn stop_capture(active: &mut Option<ActiveCapture>) -> Result<CapturedAudioFile,
         mime_type: "audio/wav".to_string(),
         bytes,
         duration_millis,
+        retained: keep_file,
     })
 }
 
@@ -367,7 +391,8 @@ fn unix_seconds_now() -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{capture_file_name, sanitize_capture_id};
+    use super::{capture_file_name, read_captured_audio_file, sanitize_capture_id};
+    use std::{fs, path::PathBuf};
 
     #[test]
     fn sanitizes_capture_file_names() {
@@ -380,5 +405,34 @@ mod tests {
             capture_file_name("product-sync-alex", 1_797_154_400),
             "recording-product-sync-alex-1797154400.wav"
         );
+    }
+
+    #[test]
+    fn removes_temporary_recording_when_raw_audio_is_not_retained() {
+        let path = test_recording_path("delete");
+        fs::write(&path, b"RIFF").expect("write test recording");
+
+        let captured = read_captured_audio_file(&path, 1200, false).expect("read captured audio");
+
+        assert_eq!(captured.bytes, b"RIFF");
+        assert_eq!(captured.duration_millis, 1200);
+        assert!(!captured.retained);
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn keeps_recording_when_raw_audio_is_retained() {
+        let path = test_recording_path("retain");
+        fs::write(&path, b"RIFF").expect("write test recording");
+
+        let captured = read_captured_audio_file(&path, 2400, true).expect("read captured audio");
+
+        assert!(captured.retained);
+        assert!(path.exists());
+        let _ = fs::remove_file(&path);
+    }
+
+    fn test_recording_path(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!("openminutes-{name}-{}.wav", std::process::id()))
     }
 }

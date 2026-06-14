@@ -20,6 +20,7 @@ describe('TauriAudioCaptureSession', () => {
           mimeType: 'audio/wav',
           bytes: [82, 73, 70, 70],
           durationMillis: 1250,
+          retained: false,
         }
       }
       if (command === 'audio_capture_status') {
@@ -33,16 +34,36 @@ describe('TauriAudioCaptureSession', () => {
       recording: true,
       deviceName: 'MacBook Microphone',
     })
-    const file = await session.stop()
+    const result = await session.stop()
     await expect(session.status()).resolves.toEqual({ recording: false })
 
     expect(invoke).toHaveBeenCalledWith('start_audio_capture', {
       meetingId: 'product-sync-alex',
     })
-    expect(invoke).toHaveBeenCalledWith('stop_audio_capture')
+    expect(invoke).toHaveBeenCalledWith('stop_audio_capture', { keepFile: false })
     expect(invoke).toHaveBeenCalledWith('audio_capture_status')
-    expect(file.name).toBe('recording.wav')
-    expect(file.type).toBe('audio/wav')
-    expect(file.size).toBe(4)
+    expect(result.retained).toBe(false)
+    expect(result.path).toBe('/tmp/recording.wav')
+    expect(result.durationMillis).toBe(1250)
+    expect(result.file.name).toBe('recording.wav')
+    expect(result.file.type).toBe('audio/wav')
+    expect(result.file.size).toBe(4)
+  })
+
+  it('can ask native capture to retain the raw audio file', async () => {
+    const invoke = vi.fn(async () => ({
+      path: '/tmp/recording.wav',
+      fileName: 'recording.wav',
+      mimeType: 'audio/wav',
+      bytes: [82, 73, 70, 70],
+      durationMillis: 1250,
+      retained: true,
+    })) as TauriInvoke
+    const session = new TauriAudioCaptureSession(invoke)
+
+    const result = await session.stop({ keepFile: true })
+
+    expect(invoke).toHaveBeenCalledWith('stop_audio_capture', { keepFile: true })
+    expect(result.retained).toBe(true)
   })
 })

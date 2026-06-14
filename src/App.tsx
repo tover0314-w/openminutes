@@ -156,11 +156,13 @@ export function App() {
       try {
         const captureSession = await createTauriAudioCaptureSession()
         if (captureSession) {
-          const file = await captureSession.stop()
+          const capturedAudio = await captureSession.stop({
+            keepFile: appSettings.saveRawAudio,
+          })
           const request = {
             meetingId: meeting.id,
             title: meeting.title,
-            file,
+            file: capturedAudio.file,
             baseMeeting: meeting,
           }
           setLastAudioImport(request)

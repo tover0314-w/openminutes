@@ -1615,9 +1615,34 @@ Still intentionally not completed:
 1. Live streaming transcript updates while recording.
 2. System audio capture with ScreenCaptureKit.
 3. Mic + system audio mixing.
-4. Automatic cleanup policy for temporary recording files.
-5. Native audio device picker.
-6. Signed/notarized microphone permission QA.
+4. Native audio device picker.
+5. Signed/notarized microphone permission QA.
+
+### 15.23 Implementation Slice 19: Raw Audio Retention Policy
+
+Completed in the nineteenth push:
+
+1. Connected the existing `Save raw audio` setting to native microphone stop capture.
+2. Changed native stop capture to delete the temporary WAV after reading bytes when `Save raw audio` is off.
+3. Kept the raw WAV on disk only when `Save raw audio` is enabled.
+4. Returned a `retained` flag from native capture so the frontend can reason about retention state.
+5. Added tests proving:
+   - Temporary recordings are deleted by default.
+   - Recordings are retained when requested.
+   - The desktop stop call receives `keepFile: true` when the user enables `Save raw audio`.
+
+Product rule clarified:
+
+Local-first does not mean keeping raw audio by default. The app should hand audio to transcription, then remove the temporary recording unless the user explicitly opts into saving raw audio.
+
+Still intentionally not completed:
+
+1. User-visible retained recording file location.
+2. Manual delete retained raw audio from the app UI.
+3. Age-based cleanup of older retained recordings.
+4. Live streaming transcript updates while recording.
+5. System audio capture with ScreenCaptureKit.
+6. Mic + system audio mixing.
 
 ## 16. Open Questions
 

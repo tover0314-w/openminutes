@@ -31,6 +31,7 @@ Implemented foundation:
 - Editable original transcript source lines in Review.
 - Native desktop audio file picker with browser fallback for testing STT before native capture.
 - Native microphone capture foundation that records WAV files through the Tauri shell on desktop.
+- Raw microphone recordings are deleted after transcription handoff unless Save raw audio is enabled.
 - Retry affordance for failed audio import/STT setup.
 - Add/delete controls for original transcript source lines.
 - Speaker rename/merge controls for original transcript source lines.

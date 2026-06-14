@@ -157,8 +157,11 @@ fn start_audio_capture(
 }
 
 #[tauri::command]
-fn stop_audio_capture(state: State<'_, AudioCaptureManager>) -> Result<CapturedAudioFile, String> {
-    state.stop()
+fn stop_audio_capture(
+    state: State<'_, AudioCaptureManager>,
+    keep_file: Option<bool>,
+) -> Result<CapturedAudioFile, String> {
+    state.stop(keep_file.unwrap_or(false))
 }
 
 #[tauri::command]
