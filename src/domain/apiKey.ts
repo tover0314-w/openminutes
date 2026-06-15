@@ -1,30 +1,30 @@
-import { type AiProviderId } from './settings'
+import { type ApiProviderId } from './settings'
 
 export interface ApiKeyRepository {
-  has(provider: AiProviderId): Promise<boolean>
-  load(provider: AiProviderId): Promise<string | undefined>
-  save(provider: AiProviderId, apiKey: string): Promise<void>
-  delete(provider: AiProviderId): Promise<void>
+  has(provider: ApiProviderId): Promise<boolean>
+  load(provider: ApiProviderId): Promise<string | undefined>
+  save(provider: ApiProviderId, apiKey: string): Promise<void>
+  delete(provider: ApiProviderId): Promise<void>
 }
 
 export class MemoryApiKeyRepository implements ApiKeyRepository {
-  private readonly keys = new Map<AiProviderId, string>()
+  private readonly keys = new Map<ApiProviderId, string>()
 
-  async has(provider: AiProviderId): Promise<boolean> {
+  async has(provider: ApiProviderId): Promise<boolean> {
     return Boolean(this.keys.get(provider))
   }
 
-  async load(provider: AiProviderId): Promise<string | undefined> {
+  async load(provider: ApiProviderId): Promise<string | undefined> {
     return this.keys.get(provider)
   }
 
-  async save(provider: AiProviderId, apiKey: string): Promise<void> {
+  async save(provider: ApiProviderId, apiKey: string): Promise<void> {
     const trimmedKey = apiKey.trim()
     if (!trimmedKey) throw new Error('API key cannot be empty.')
     this.keys.set(provider, trimmedKey)
   }
 
-  async delete(provider: AiProviderId): Promise<void> {
+  async delete(provider: ApiProviderId): Promise<void> {
     this.keys.delete(provider)
   }
 }

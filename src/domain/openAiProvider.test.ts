@@ -14,7 +14,7 @@ import { defaultAppSettings } from './settings'
 describe('OpenAICompatibleAiNotesProvider', () => {
   it('calls an OpenAI-compatible chat completions endpoint and parses AI Notes', async () => {
     const apiKeys = new MemoryApiKeyRepository()
-    await apiKeys.save('openai-compatible', 'test-key')
+    await apiKeys.save('openai', 'test-key')
     const fetcher = vi.fn(async () => ({
       ok: true,
       json: async () => ({
@@ -34,7 +34,15 @@ describe('OpenAICompatibleAiNotesProvider', () => {
         ],
       }),
     })) as unknown as typeof fetch
-    const provider = new OpenAICompatibleAiNotesProvider(defaultAppSettings, apiKeys, fetcher)
+    const provider = new OpenAICompatibleAiNotesProvider(
+      {
+        ...defaultAppSettings,
+        aiProvider: 'openai',
+        notesModel: 'gpt-4.1-mini',
+      },
+      apiKeys,
+      fetcher,
+    )
 
     const notes = await provider.generateNotes({
       meeting: createDemoMeeting('ready'),
@@ -57,6 +65,50 @@ describe('OpenAICompatibleAiNotesProvider', () => {
     const notes = parseAiNotesJson('Here:\n{"summary":"S","decisions":[],"actionItems":[],"openQuestions":[],"keyPoints":[],"followUpDraft":""}')
 
     expect(notes.summary).toBe('S')
+  })
+
+  it('keeps action items when providers use common alternate field names', () => {
+    const notes = parseAiNotesJson(
+      JSON.stringify({
+        summary: 'S',
+        decisions: [],
+        actionItems: [{ task: 'Prepare the launch checklist', responsible: 'Alice', deadline: 'Friday' }],
+        openQuestions: [],
+        keyPoints: [],
+        followUpDraft: '',
+      }),
+    )
+
+    expect(notes.actionItems).toEqual([
+      {
+        id: 'a1',
+        text: 'Prepare the launch checklist',
+        owner: 'Alice',
+        due: 'Friday',
+      },
+    ])
+  })
+
+  it('drops placeholder owner and due values from action items', () => {
+    const notes = parseAiNotesJson(
+      JSON.stringify({
+        summary: 'S',
+        decisions: [],
+        actionItems: [{ text: 'Prepare the launch checklist', owner: 'Unknown', due: 'TBD' }],
+        openQuestions: [],
+        keyPoints: [],
+        followUpDraft: '',
+      }),
+    )
+
+    expect(notes.actionItems).toEqual([
+      {
+        id: 'a1',
+        text: 'Prepare the launch checklist',
+        owner: undefined,
+        due: undefined,
+      },
+    ])
   })
 
   it('requires an API key for OpenAI-compatible providers', async () => {
@@ -110,12 +162,94 @@ describe('OpenAICompatibleAiNotesProvider', () => {
       }),
     )
   })
+
+  it('can generate AI Notes through Groq chat completions', async () => {
+    const apiKeys = new MemoryApiKeyRepository()
+    await apiKeys.save('groq', 'groq-key')
+    const fetcher = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        choices: [
+          {
+            message: {
+              content: '{"summary":"Groq","decisions":[],"actionItems":[],"openQuestions":[],"keyPoints":[],"followUpDraft":""}',
+            },
+          },
+        ],
+      }),
+    })) as unknown as typeof fetch
+    const provider = new OpenAICompatibleAiNotesProvider(
+      {
+        ...defaultAppSettings,
+        aiProvider: 'groq',
+        notesModel: 'llama-3.3-70b-versatile',
+      },
+      apiKeys,
+      fetcher,
+    )
+
+    const notes = await provider.generateNotes({
+      meeting: createDemoMeeting('ready'),
+      context: buildAiNotesContext(createDemoMeeting('ready')),
+    })
+
+    expect(notes.summary).toBe('Groq')
+    expect(fetcher).toHaveBeenCalledWith(
+      'https://api.groq.com/openai/v1/chat/completions',
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Authorization: 'Bearer groq-key',
+        }),
+      }),
+    )
+  })
+
+  it('can generate AI Notes through OpenRouter chat completions', async () => {
+    const apiKeys = new MemoryApiKeyRepository()
+    await apiKeys.save('openrouter', 'openrouter-key')
+    const fetcher = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        choices: [
+          {
+            message: {
+              content: '{"summary":"OpenRouter","decisions":[],"actionItems":[],"openQuestions":[],"keyPoints":[],"followUpDraft":""}',
+            },
+          },
+        ],
+      }),
+    })) as unknown as typeof fetch
+    const provider = new OpenAICompatibleAiNotesProvider(
+      {
+        ...defaultAppSettings,
+        aiProvider: 'openrouter',
+        notesModel: 'openai/gpt-4o-mini',
+      },
+      apiKeys,
+      fetcher,
+    )
+
+    const notes = await provider.generateNotes({
+      meeting: createDemoMeeting('ready'),
+      context: buildAiNotesContext(createDemoMeeting('ready')),
+    })
+
+    expect(notes.summary).toBe('OpenRouter')
+    expect(fetcher).toHaveBeenCalledWith(
+      'https://openrouter.ai/api/v1/chat/completions',
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Authorization: 'Bearer openrouter-key',
+        }),
+      }),
+    )
+  })
 })
 
 describe('OpenAICompatibleTranscriptionProvider', () => {
   it('uploads an audio file to an OpenAI-compatible transcription endpoint', async () => {
     const apiKeys = new MemoryApiKeyRepository()
-    await apiKeys.save('openai-compatible', 'test-key')
+    await apiKeys.save('openai', 'test-key')
     const fetcher = vi.fn(async () => ({
       ok: true,
       json: async () => ({

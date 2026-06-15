@@ -13,7 +13,7 @@ License: MIT.
 - Desktop UI prototype for review: `prototypes/desktop-ui.html`
 - Earlier web-style prototype for comparison: `prototypes/ui.html`
 
-This first version locks the desktop product model before adding real audio, STT, LLM, and hosted export providers.
+This first version locks the desktop product model while incrementally adding real capture, provider, and export foundations.
 
 Implemented foundation:
 
@@ -23,15 +23,20 @@ Implemented foundation:
 - Provider interfaces for transcription and AI Notes generation.
 - Mock STT and AI Notes providers for local development and tests.
 - OS keychain-backed provider API key commands in the desktop shell.
+- Separate API key slots for OpenAI, Groq, OpenRouter, Doubao, Deepgram, AssemblyAI, and OpenAI-compatible providers.
+- Desktop provider connection tests for OpenAI, Groq, OpenRouter, Doubao realtime, Deepgram, AssemblyAI, custom OpenAI-compatible endpoints, and Ollama.
+- OpenAI AI Notes provider adapter behind the provider boundary.
+- Groq/OpenRouter/OpenAI-compatible AI Notes generation through the same chat-completions boundary.
+- OpenAI/Groq/Doubao/OpenAI-compatible STT provider adapters for imported or captured audio files.
+- Realtime STT provider settings for OpenAI Realtime, Doubao, Deepgram, and AssemblyAI.
 - macOS-safe Tauri bundle identifier for warning-free desktop packaging.
-- OpenAI-compatible AI Notes provider adapter behind the provider boundary.
-- OpenAI-compatible STT provider adapter for imported audio files.
 - Explicit local demo modes for STT import and AI Notes generation without provider keys.
-- Editable AI Notes in Review, including key points and action item owners.
+- Plain-text Review AI Notes with source citation chips back to transcript lines.
 - Editable original transcript source lines in Review.
 - Native desktop audio file picker with browser fallback for testing STT before native capture.
 - Native microphone capture foundation that records WAV files through the Tauri shell on desktop.
 - Raw microphone recordings are deleted after transcription handoff unless Save raw audio is enabled.
+- Retained raw audio is shown in Review with file location and a delete action.
 - Retry affordance for failed audio import/STT setup.
 - Add/delete controls for original transcript source lines.
 - Speaker rename/merge controls for original transcript source lines.
@@ -56,7 +61,7 @@ Review turns the meeting into AI Notes, with the original transcript kept as sou
 
 ![OpenMinutes Review](output/playwright/openminutes-review.png)
 
-Review reads like a document while emphasizing user notes and markers as source signals. AI Notes can also link back to cited original transcript lines:
+Review reads like AI-generated conclusions, with manual notes and markers only lightly emphasized as source signals:
 
 ![OpenMinutes Review Document UI](output/playwright/openminutes-review-document-ui.png)
 
@@ -79,10 +84,6 @@ Imported demo audio lands in Review with editable transcript source and generate
 Provider errors preserve the existing AI Notes in Review:
 
 ![OpenMinutes Provider Error](output/playwright/openminutes-review-provider-error.png)
-
-Review AI Notes are editable before copy/export:
-
-![OpenMinutes Editable Review](output/playwright/openminutes-review-editable-ai-notes.png)
 
 Imported audio uses the STT provider path and surfaces configuration errors:
 
@@ -112,6 +113,12 @@ npm run dev
 npm test
 npm run build
 npm run tauri -- dev
+```
+
+Doubao realtime smoke testing uses local environment variables from `.env.local`:
+
+```bash
+cargo run --manifest-path src-tauri/Cargo.toml --bin doubao_realtime_smoke -- /path/to/16k-mono-int16.wav
 ```
 
 ## Product Logic

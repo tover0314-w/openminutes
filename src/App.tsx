@@ -7,10 +7,8 @@ import {
   Mic,
   Settings,
   Sparkles,
-  Square,
 } from 'lucide-react'
 import {
-  type ActionItem,
   type AiNotes,
   type Meeting,
   type MeetingPhase,
@@ -25,10 +23,21 @@ import { createTauriAudioCaptureSession } from './desktop/audioCapture'
 import { selectTauriAudioFile } from './desktop/audioImport'
 import { exportMarkdownFile } from './desktop/markdownExport'
 import { createTauriMeetingRepository } from './desktop/meetingRepository'
+import {
+  testProviderConnection,
+  type ProviderConnectionTestResult,
+} from './desktop/providerConnection'
+import { listenRealtimeTranscript } from './desktop/realtimeTranscript'
 import { createTauriAppSettingsRepository } from './desktop/settingsRepository'
 import { isTauriRuntime } from './desktop/tauri'
-import { findTranscriptCitations, type TranscriptCitation } from './domain/citations'
-import { formatMeetingMarkdown } from './domain/markdown'
+import { listenCapsuleCommand, publishCapsuleState } from './desktop/capsuleBridge'
+import {
+  findReviewCitations,
+  getHumanNoteSources,
+  type ReviewCitation,
+} from './domain/citations'
+import { createCapsuleStatePayload } from './domain/capsule'
+import { formatAiNotesDocument, formatMeetingMarkdown } from './domain/markdown'
 import {
   createAiNotesProvider,
   createTranscriptionProvider,
@@ -36,18 +45,23 @@ import {
 } from './domain/providerFactory'
 import { generateAiNotesForMeeting } from './domain/providers'
 import {
+  type ApiProviderId,
   type AppSettings,
   type AppSettingsRepository,
+  type BatchTranscriptionProviderId,
   createBrowserAppSettingsRepository,
   loadBrowserAppSettings,
+  type RealtimeTranscriptionProviderId,
 } from './domain/settings'
 import { type AsyncMeetingRepository, createDefaultMeetingRepository } from './domain/storage'
 
 type Route = 'today' | 'meeting' | 'library' | 'settings'
-type SettingsPane = 'general' | 'audio' | 'ai' | 'exports' | 'about'
+type SettingsPane = 'general' | 'transcription' | 'aiNotes' | 'exports' | 'about'
 type AiGenerationStatus = 'idle' | 'generating' | 'configuration_error' | 'error'
 type TranscriptionStatus = 'idle' | 'importing' | 'configuration_error' | 'error'
 type ApiKeyStatus = 'idle' | 'saving' | 'saved' | 'deleted' | 'error'
+type ApiConnectionStatus = 'idle' | 'testing' | 'success' | 'error'
+type ApiKeyConfiguredMap = Partial<Record<ApiProviderId, boolean>>
 
 interface AudioImportRequest {
   meetingId: string
@@ -65,17 +79,68 @@ const navItems = [
 
 const settingsItems = [
   { id: 'general' as const, label: 'General', icon: Settings },
-  { id: 'audio' as const, label: 'Audio', icon: Mic },
-  { id: 'ai' as const, label: 'AI', icon: Sparkles },
+  { id: 'transcription' as const, label: 'Transcription', icon: Mic },
+  { id: 'aiNotes' as const, label: 'AI Notes', icon: Sparkles },
   { id: 'exports' as const, label: 'Exports', icon: FileText },
   { id: 'about' as const, label: 'About', icon: CircleUser },
 ]
+
+const apiKeyProviders: Array<{ id: ApiProviderId; label: string }> = [
+  { id: 'openai', label: 'OpenAI' },
+  { id: 'groq', label: 'Groq' },
+  { id: 'openrouter', label: 'OpenRouter' },
+  { id: 'doubao', label: 'Doubao' },
+  { id: 'deepgram', label: 'Deepgram' },
+  { id: 'assemblyai', label: 'AssemblyAI' },
+  { id: 'openai-compatible', label: 'Compatible' },
+]
+
+const realtimeProviderOptions: Array<{ id: RealtimeTranscriptionProviderId; label: string }> = [
+  { id: 'openai-realtime', label: 'OpenAI RT' },
+  { id: 'doubao-realtime', label: 'Doubao' },
+  { id: 'deepgram', label: 'Deepgram' },
+  { id: 'assemblyai', label: 'AssemblyAI' },
+]
+
+const batchSttProviderOptions: Array<{ id: BatchTranscriptionProviderId; label: string }> = [
+  { id: 'openai', label: 'OpenAI' },
+  { id: 'groq', label: 'Groq' },
+  { id: 'doubao', label: 'Doubao' },
+  { id: 'openai-compatible', label: 'Compatible' },
+]
+
+const aiNotesProviderOptions: Array<{ id: AppSettings['aiProvider']; label: string }> = [
+  { id: 'openrouter', label: 'OpenRouter' },
+  { id: 'openai', label: 'OpenAI' },
+  { id: 'groq', label: 'Groq' },
+  { id: 'openai-compatible', label: 'Compatible' },
+  { id: 'ollama', label: 'Ollama' },
+]
+
+const MEETING_GLOBAL_SHORTCUT = 'Alt+M'
+const MEETING_GLOBAL_SHORTCUT_LABEL = 'Option+M'
 
 const routeTitles: Record<Route, string> = {
   today: 'Today',
   meeting: 'Meeting',
   library: 'Library',
   settings: 'Settings',
+}
+
+function createRecordingMeeting(now = new Date()): Meeting {
+  return {
+    id: `meeting-${now.getTime()}`,
+    title: 'New Meeting',
+    template: 'General meeting',
+    participants: [],
+    startedAt: now.toISOString(),
+    duration: '00:00',
+    phase: 'recording',
+    manualNotes: '',
+    markers: [],
+    transcript: [],
+    aiNotes: undefined,
+  }
 }
 
 export function App() {
@@ -104,11 +169,31 @@ export function App() {
   const [lastAudioImport, setLastAudioImport] = useState<AudioImportRequest | undefined>()
   const [aiGenerationStatus, setAiGenerationStatus] = useState<AiGenerationStatus>('idle')
   const [aiGenerationError, setAiGenerationError] = useState('')
-  const [apiKeyConfigured, setApiKeyConfigured] = useState(false)
+  const [apiKeyConfiguredByProvider, setApiKeyConfiguredByProvider] =
+    useState<ApiKeyConfiguredMap>({})
+  const [apiKeyProvider, setApiKeyProvider] = useState<ApiProviderId>(() =>
+    recommendedApiKeyProvider(loadBrowserAppSettings()),
+  )
   const [apiKeyDraft, setApiKeyDraft] = useState('')
   const [apiKeyStatus, setApiKeyStatus] = useState<ApiKeyStatus>('idle')
   const [apiKeyError, setApiKeyError] = useState('')
+  const [apiConnectionStatus, setApiConnectionStatus] = useState<ApiConnectionStatus>('idle')
+  const [apiConnectionResult, setApiConnectionResult] =
+    useState<ProviderConnectionTestResult | undefined>()
+  const capsuleCommandHandlersRef = useRef<{
+    start: () => void | Promise<void>
+    stop: () => void | Promise<void>
+    hide: () => void | Promise<void>
+  }>({
+    start: () => {},
+    stop: () => {},
+    hide: () => {},
+  })
   const view = getMeetingViewModel(meeting)
+  const capsuleStatePayload = useMemo(
+    () => createCapsuleStatePayload(meeting, Date.now(), appSettings.desktopCapsuleEnabled),
+    [appSettings.desktopCapsuleEnabled, meeting.duration, meeting.id, meeting.phase, meeting.title],
+  )
 
   const meetings = useMemo(
     () => [
@@ -125,7 +210,7 @@ export function App() {
   }
 
   const startMeeting = async () => {
-    const recordingMeeting = createDemoMeeting('recording')
+    const recordingMeeting = createRecordingMeeting()
     setMeeting(recordingMeeting)
     setTranscriptionStatus('idle')
     setTranscriptionError('')
@@ -136,7 +221,10 @@ export function App() {
 
     try {
       const captureSession = await createTauriAudioCaptureSession()
-      await captureSession?.start(recordingMeeting.id)
+      await captureSession?.start(recordingMeeting.id, {
+        realtimeProvider: appSettings.realtimeTranscriptionProvider,
+        realtimeModel: appSettings.realtimeModel,
+      })
     } catch (error) {
       setMeeting((current) =>
         current.id === recordingMeeting.id
@@ -151,6 +239,19 @@ export function App() {
     }
   }
 
+  const startMeetingFromShortcut = async () => {
+    if (
+      meeting.phase === 'recording' ||
+      meeting.phase === 'finalizing_transcript' ||
+      meeting.phase === 'generating_ai_notes'
+    ) {
+      setRoute('meeting')
+      return
+    }
+
+    await startMeeting()
+  }
+
   const stopRecording = async () => {
     if (isTauriRuntime()) {
       try {
@@ -159,11 +260,32 @@ export function App() {
           const capturedAudio = await captureSession.stop({
             keepFile: appSettings.saveRawAudio,
           })
+          const baseMeeting = {
+            ...meeting,
+            rawAudio: capturedAudio.retained
+              ? {
+                  path: capturedAudio.path,
+                  fileName: capturedAudio.file.name,
+                  durationMillis: capturedAudio.durationMillis,
+                  retainedAt: new Date().toISOString(),
+                }
+              : undefined,
+          }
+          if (baseMeeting.transcript.length) {
+            setLastAudioImport(undefined)
+            setTranscriptionStatus('idle')
+            setTranscriptionError('')
+            await generateAiNotesFromMeeting({
+              ...baseMeeting,
+              phase: 'generating_ai_notes',
+            })
+            return
+          }
           const request = {
             meetingId: meeting.id,
             title: meeting.title,
             file: capturedAudio.file,
-            baseMeeting: meeting,
+            baseMeeting,
           }
           setLastAudioImport(request)
           await transcribeAudioImport(request)
@@ -183,16 +305,16 @@ export function App() {
       }
     }
 
-    setMeeting((current) => ({
-      ...createDemoMeeting('ready'),
-      manualNotes: current.manualNotes,
-    }))
+    const demoSource = {
+      ...meeting,
+      phase: 'generating_ai_notes' as const,
+      transcript: meeting.transcript.length ? meeting.transcript : createDemoMeeting('recording').transcript,
+    }
     setTranscriptionStatus('idle')
     setTranscriptionError('')
     setLastAudioImport(undefined)
-    setAiGenerationStatus('idle')
-    setAiGenerationError('')
     setRoute('meeting')
+    await generateAiNotesFromMeeting(demoSource, { localDemoFallback: true })
   }
 
   const openAudioImport = async () => {
@@ -251,11 +373,10 @@ export function App() {
   }
 
   const transcribeAudioImport = async (request: AudioImportRequest) => {
-    const importedMeeting: Meeting = request.baseMeeting
+      const importedMeeting: Meeting = request.baseMeeting
       ? {
           ...request.baseMeeting,
           phase: 'finalizing_transcript',
-          transcript: [],
           aiNotes: undefined,
         }
       : {
@@ -286,16 +407,14 @@ export function App() {
         audioFileName: request.file.name,
       })
 
-      setMeeting((current) =>
-        current.id === request.meetingId
-          ? {
-              ...current,
-              phase: 'needs_review',
-              transcript,
-            }
-          : current,
-      )
+      const transcriptMeeting: Meeting = {
+        ...importedMeeting,
+        phase: 'generating_ai_notes',
+        transcript,
+      }
+      setMeeting((current) => (current.id === request.meetingId ? transcriptMeeting : current))
       setTranscriptionStatus('idle')
+      await generateAiNotesFromMeeting(transcriptMeeting)
     } catch (error) {
       setMeeting((current) =>
         current.id === request.meetingId
@@ -311,30 +430,59 @@ export function App() {
   }
 
   const regenerateAiNotes = async () => {
+    await generateAiNotesFromMeeting(meeting)
+  }
+
+  const generateAiNotesFromMeeting = async (
+    sourceMeeting: Meeting,
+    options: { localDemoFallback?: boolean } = {},
+  ) => {
     setAiGenerationStatus('generating')
     setAiGenerationError('')
+    const generatingMeeting: Meeting = {
+      ...sourceMeeting,
+      phase: 'generating_ai_notes',
+    }
+    setMeeting((current) => (current.id === sourceMeeting.id ? generatingMeeting : current))
 
     try {
-      const provider = createAiNotesProvider(appSettings, apiKeyRepository)
-      const generatedMeeting = await generateAiNotesForMeeting(provider, meeting)
+      const provider = createAiNotesProvider(
+        options.localDemoFallback ? { ...appSettings, notesMode: 'local-demo' } : appSettings,
+        apiKeyRepository,
+      )
+      const generatedMeeting = await generateAiNotesForMeeting(provider, generatingMeeting)
       setMeeting(generatedMeeting)
       setCopyStatus('idle')
       setExportStatus('idle')
       setAiGenerationStatus('idle')
+      return generatedMeeting
     } catch (error) {
       setAiGenerationStatus(isProviderConfigurationError(error) ? 'configuration_error' : 'error')
       setAiGenerationError(errorMessage(error))
+      setMeeting((current) =>
+        current.id === sourceMeeting.id
+          ? {
+              ...sourceMeeting,
+              phase: 'needs_review',
+            }
+          : current,
+      )
+      return undefined
     }
   }
 
-  const saveApiKey = async () => {
+  const saveApiKey = async (provider = apiKeyProvider, draft = apiKeyDraft) => {
     setApiKeyStatus('saving')
     setApiKeyError('')
+    setApiKeyProvider(provider)
 
     try {
-      await apiKeyRepository.save(appSettings.aiProvider, apiKeyDraft)
+      await apiKeyRepository.save(provider, draft)
       setApiKeyDraft('')
-      setApiKeyConfigured(true)
+      setApiKeyConfiguredByProvider((current) => ({
+        ...current,
+        [provider]: true,
+      }))
       setApiKeyStatus('saved')
     } catch (error) {
       setApiKeyStatus('error')
@@ -342,18 +490,26 @@ export function App() {
     }
   }
 
-  const deleteApiKey = async () => {
-    setApiKeyStatus('saving')
+  const testApiKeyConnection = async (provider = apiKeyProvider) => {
+    setApiConnectionStatus('testing')
+    setApiConnectionResult(undefined)
     setApiKeyError('')
+    setApiKeyProvider(provider)
 
     try {
-      await apiKeyRepository.delete(appSettings.aiProvider)
-      setApiKeyDraft('')
-      setApiKeyConfigured(false)
-      setApiKeyStatus('deleted')
+      const result = await testProviderConnection(
+        provider,
+        providerTestBaseUrl(provider, appSettings),
+      )
+      setApiConnectionResult(result)
+      setApiConnectionStatus(result.ok ? 'success' : 'error')
     } catch (error) {
-      setApiKeyStatus('error')
-      setApiKeyError(errorMessage(error))
+      setApiConnectionStatus('error')
+      setApiConnectionResult({
+        provider,
+        ok: false,
+        message: errorMessage(error),
+      })
     }
   }
 
@@ -395,6 +551,20 @@ export function App() {
     }
   }
 
+  const updateTranscript = (transcript: TranscriptLine[]) => {
+    setMeeting((current) => ({
+      ...current,
+      transcript,
+    }))
+  }
+
+  const updateManualNotes = (manualNotes: string) => {
+    setMeeting((current) => ({
+      ...current,
+      manualNotes,
+    }))
+  }
+
   const updateAiNotes = (aiNotes: AiNotes) => {
     setMeeting((current) => ({
       ...current,
@@ -402,12 +572,92 @@ export function App() {
     }))
   }
 
-  const updateTranscript = (transcript: TranscriptLine[]) => {
-    setMeeting((current) => ({
-      ...current,
-      transcript,
-    }))
+  const deleteRawAudio = async () => {
+    const rawAudio = meeting.rawAudio
+    if (!rawAudio) return
+
+    try {
+      if (isTauriRuntime()) {
+        const captureSession = await createTauriAudioCaptureSession()
+        await captureSession?.deleteFile(rawAudio.path)
+      }
+      setMeeting((current) =>
+        current.rawAudio?.path === rawAudio.path
+          ? {
+              ...current,
+              rawAudio: undefined,
+            }
+          : current,
+      )
+    } catch (error) {
+      setTranscriptionStatus('error')
+      setTranscriptionError(errorMessage(error))
+    }
   }
+
+  useEffect(() => {
+    capsuleCommandHandlersRef.current = {
+      start: startMeetingFromShortcut,
+      stop: stopRecording,
+      hide: () => updateSettings({ desktopCapsuleEnabled: false }),
+    }
+  })
+
+  useEffect(() => {
+    void publishCapsuleState(capsuleStatePayload)
+  }, [capsuleStatePayload])
+
+  useEffect(() => {
+    let disposed = false
+    let unsubscribe: (() => void) | undefined
+
+    listenCapsuleCommand((payload) => {
+      const handler = capsuleCommandHandlersRef.current[payload.command]
+      void handler()
+    }).then((cleanup) => {
+      if (disposed) cleanup()
+      else unsubscribe = cleanup
+    })
+
+    return () => {
+      disposed = true
+      unsubscribe?.()
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!isTauriRuntime()) return
+
+    let disposed = false
+    let registered = false
+
+    import('@tauri-apps/plugin-global-shortcut')
+      .then(async ({ register, unregister }) => {
+        await register(MEETING_GLOBAL_SHORTCUT, (event) => {
+          if (event.state === 'Pressed') {
+            void capsuleCommandHandlersRef.current.start()
+          }
+        })
+        registered = true
+
+        if (disposed) {
+          registered = false
+          await unregister(MEETING_GLOBAL_SHORTCUT)
+        }
+      })
+      .catch(() => {
+        registered = false
+      })
+
+    return () => {
+      disposed = true
+      if (registered) {
+        void import('@tauri-apps/plugin-global-shortcut').then(({ unregister }) =>
+          unregister(MEETING_GLOBAL_SHORTCUT),
+        )
+      }
+    }
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -448,6 +698,65 @@ export function App() {
   }, [])
 
   useEffect(() => {
+    let disposed = false
+    let unsubscribe: (() => void) | undefined
+
+    listenRealtimeTranscript(
+      (payload) => {
+        if (disposed) return
+        setMeeting((current) =>
+          current.id === payload.meetingId
+            ? {
+                ...current,
+                transcript: upsertTranscriptLine(current.transcript, payload.line),
+              }
+            : current,
+        )
+      },
+      (payload) => {
+        if (disposed) return
+        setMeeting((current) =>
+          current.id === payload.meetingId
+            ? {
+                ...current,
+                phase: 'error',
+              }
+            : current,
+        )
+        setTranscriptionStatus('error')
+        setTranscriptionError(payload.message)
+      },
+    ).then((cleanup) => {
+      if (disposed) cleanup()
+      else unsubscribe = cleanup
+    })
+
+    return () => {
+      disposed = true
+      unsubscribe?.()
+    }
+  }, [])
+
+  useEffect(() => {
+    if (meeting.phase !== 'recording') return
+    const startedAt = Date.parse(meeting.startedAt)
+    if (!Number.isFinite(startedAt)) return
+
+    const interval = window.setInterval(() => {
+      setMeeting((current) =>
+        current.id === meeting.id && current.phase === 'recording'
+          ? {
+              ...current,
+              duration: formatClockDuration(Date.now() - startedAt),
+            }
+          : current,
+      )
+    }, 1000)
+
+    return () => window.clearInterval(interval)
+  }, [meeting.id, meeting.phase, meeting.startedAt])
+
+  useEffect(() => {
     meetingRepository.save(meeting)
     desktopRepository?.save(meeting).catch(() => {
       setStorageMode('browser')
@@ -467,19 +776,45 @@ export function App() {
 
   useEffect(() => {
     let cancelled = false
+    const providers = apiKeyProviders.map((provider) => provider.id)
+
+    Promise.all(
+      providers.map(async (provider) => [provider, await apiKeyRepository.has(provider)] as const),
+    )
+      .then((entries) => {
+        if (cancelled) return
+        setApiKeyConfiguredByProvider(Object.fromEntries(entries) as ApiKeyConfiguredMap)
+      })
+      .catch(() => {
+        if (!cancelled) setApiKeyConfiguredByProvider({})
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [apiKeyRepository, apiKeyStatus])
+
+  useEffect(() => {
+    let cancelled = false
 
     setApiKeyDraft('')
     setApiKeyStatus('idle')
     setApiKeyError('')
+    setApiConnectionStatus('idle')
+    setApiConnectionResult(undefined)
 
     apiKeyRepository
-      .has(appSettings.aiProvider)
-      .then((configured) => {
-        if (!cancelled) setApiKeyConfigured(configured)
+      .has(apiKeyProvider)
+        .then((configured) => {
+          if (!cancelled) {
+            setApiKeyConfiguredByProvider((current) => ({
+              ...current,
+              [apiKeyProvider]: configured,
+          }))
+        }
       })
       .catch((error) => {
         if (cancelled) return
-        setApiKeyConfigured(false)
         setApiKeyStatus('error')
         setApiKeyError(errorMessage(error))
       })
@@ -487,7 +822,7 @@ export function App() {
     return () => {
       cancelled = true
     }
-  }, [apiKeyRepository, appSettings.aiProvider])
+  }, [apiKeyRepository, apiKeyProvider])
 
   return (
     <div className="app">
@@ -528,8 +863,10 @@ export function App() {
             transcriptionStatus={transcriptionStatus}
             transcriptionError={transcriptionError}
             onRetryTranscriptImport={lastAudioImport ? retryAudioImport : undefined}
-            onUpdateAiNotes={updateAiNotes}
+            onUpdateManualNotes={updateManualNotes}
             onUpdateTranscript={updateTranscript}
+            onUpdateAiNotes={updateAiNotes}
+            onDeleteRawAudio={deleteRawAudio}
           />
         )}
         {route === 'library' && <LibraryPage meetings={meetings} onOpenMeeting={() => setRoute('meeting')} />}
@@ -540,17 +877,20 @@ export function App() {
             storageMode={storageMode}
             onSelectPane={setSettingsPane}
             onUpdateSettings={updateSettings}
-            apiKeyConfigured={apiKeyConfigured}
+            apiKeyConfiguredByProvider={apiKeyConfiguredByProvider}
+            apiKeyProvider={apiKeyProvider}
             apiKeyDraft={apiKeyDraft}
             apiKeyStatus={apiKeyStatus}
             apiKeyError={apiKeyError}
+            apiConnectionStatus={apiConnectionStatus}
+            apiConnectionResult={apiConnectionResult}
+            onApiKeyProviderChange={setApiKeyProvider}
             onApiKeyDraftChange={setApiKeyDraft}
             onSaveApiKey={saveApiKey}
-            onDeleteApiKey={deleteApiKey}
+            onTestApiKey={testApiKeyConnection}
           />
         )}
       </main>
-      <FloatingCapsule phase={meeting.phase} duration={meeting.duration} onStop={stopRecording} />
     </div>
   )
 }
@@ -625,11 +965,6 @@ function TodayPage({
             transcript. Review turns those notes and transcript into AI Notes after stop.
           </p>
         </div>
-        <div className="marker-bar">
-          <button>Decision</button>
-          <button>Action</button>
-          <button>Question</button>
-        </div>
       </aside>
     </section>
   )
@@ -649,8 +984,10 @@ function MeetingPage({
   transcriptionStatus,
   transcriptionError,
   onRetryTranscriptImport,
-  onUpdateAiNotes,
+  onUpdateManualNotes,
   onUpdateTranscript,
+  onUpdateAiNotes,
+  onDeleteRawAudio,
 }: {
   meeting: Meeting
   view: ReturnType<typeof getMeetingViewModel>
@@ -665,37 +1002,74 @@ function MeetingPage({
   transcriptionStatus: TranscriptionStatus
   transcriptionError: string
   onRetryTranscriptImport?: () => void | Promise<void>
-  onUpdateAiNotes: (aiNotes: AiNotes) => void
+  onUpdateManualNotes: (manualNotes: string) => void
   onUpdateTranscript: (transcript: TranscriptLine[]) => void
+  onUpdateAiNotes: (aiNotes: AiNotes) => void
+  onDeleteRawAudio: () => void | Promise<void>
 }) {
   const contextPreview = buildAiNotesContext(meeting)
+  const [reviewSource, setReviewSource] = useState<'review' | 'manual'>('review')
   const [selectedTranscriptLineId, setSelectedTranscriptLineId] = useState<string | undefined>()
+  const [selectedHumanSourceId, setSelectedHumanSourceId] = useState<string | undefined>()
+
+  useEffect(() => {
+    setReviewSource('review')
+    setSelectedHumanSourceId(undefined)
+    setSelectedTranscriptLineId(undefined)
+  }, [meeting.id, view.mode])
+
+  const selectReviewCitation = (citation: ReviewCitation) => {
+    if (citation.type === 'human') {
+      setSelectedHumanSourceId(citation.source.id)
+      setReviewSource('manual')
+      return
+    }
+
+    setSelectedTranscriptLineId(citation.line.id)
+  }
 
   return (
     <section className="content meeting-layout" aria-label="Meeting">
       {view.mode === 'focus' ? (
         <>
-          <ManualNotesPane meeting={meeting} onStopRecording={onStopRecording} />
+          <ManualNotesPane
+            meeting={meeting}
+            onUpdateManualNotes={onUpdateManualNotes}
+            onStopRecording={onStopRecording}
+          />
           <TranscriptPane title="Live Transcript" subtitle="Realtime STT while recording" meeting={meeting} live />
         </>
       ) : (
         <>
-          <AiNotesPane
-            meeting={meeting}
-            onRegenerate={onRegenerate}
-            onCopyMarkdown={onCopyMarkdown}
-            onSaveMarkdown={onSaveMarkdown}
-            copyStatus={copyStatus}
-            exportStatus={exportStatus}
-            aiGenerationStatus={aiGenerationStatus}
-            aiGenerationError={aiGenerationError}
-            transcriptionStatus={transcriptionStatus}
-            transcriptionError={transcriptionError}
-            onRetryTranscriptImport={onRetryTranscriptImport}
-            onUpdateAiNotes={onUpdateAiNotes}
-            contextPreview={contextPreview}
-            onSelectTranscriptSource={setSelectedTranscriptLineId}
-          />
+          {reviewSource === 'manual' ? (
+            <ManualNotesPane
+              meeting={meeting}
+              onUpdateManualNotes={onUpdateManualNotes}
+              readOnly
+              sourceMode
+              selectedHumanSourceId={selectedHumanSourceId}
+              onBackToReview={() => setReviewSource('review')}
+            />
+          ) : (
+            <AiNotesPane
+              meeting={meeting}
+              onRegenerate={onRegenerate}
+              onCopyMarkdown={onCopyMarkdown}
+              onSaveMarkdown={onSaveMarkdown}
+              copyStatus={copyStatus}
+              exportStatus={exportStatus}
+              aiGenerationStatus={aiGenerationStatus}
+              aiGenerationError={aiGenerationError}
+              transcriptionStatus={transcriptionStatus}
+              transcriptionError={transcriptionError}
+              onRetryTranscriptImport={onRetryTranscriptImport}
+              contextPreview={contextPreview}
+              onOpenManualSource={() => setReviewSource('manual')}
+              onSelectCitation={selectReviewCitation}
+              onUpdateAiNotes={onUpdateAiNotes}
+              onDeleteRawAudio={onDeleteRawAudio}
+            />
+          )}
           <TranscriptPane
             title="Original Transcript"
             subtitle="Source for AI Notes"
@@ -712,16 +1086,28 @@ function MeetingPage({
 
 function ManualNotesPane({
   meeting,
+  onUpdateManualNotes,
   onStopRecording,
+  readOnly = false,
+  sourceMode = false,
+  selectedHumanSourceId,
+  onBackToReview,
 }: {
   meeting: Meeting
-  onStopRecording: () => void | Promise<void>
+  onUpdateManualNotes: (manualNotes: string) => void
+  onStopRecording?: () => void | Promise<void>
+  readOnly?: boolean
+  sourceMode?: boolean
+  selectedHumanSourceId?: string
+  onBackToReview?: () => void
 }) {
   return (
-    <div className="pane jelly-card">
+    <div className={`pane jelly-card ${sourceMode ? 'manual-source-pane' : ''}`}>
       <PaneHeader
         title={meeting.title}
-        subtitle="Recording - Focus mode - Mic + system audio"
+        subtitle={
+          sourceMode ? 'Focus source used by AI Notes' : 'Recording - Focus mode - Mic + system audio'
+        }
         aside={
           <div className="status-row">
             <ModeSwitch active="focus" />
@@ -729,18 +1115,76 @@ function ManualNotesPane({
           </div>
         }
       />
-      <div className="editor-shell">
-        <textarea className="note-editor" value={meeting.manualNotes} readOnly aria-label="Manual notes" />
+      {sourceMode ? (
+        <ManualSourceList
+          manualNotes={meeting.manualNotes}
+          selectedHumanSourceId={selectedHumanSourceId}
+        />
+      ) : (
+        <div className="editor-shell">
+          <textarea
+            className="note-editor"
+            value={meeting.manualNotes}
+            aria-label="Manual notes"
+            placeholder="Write the important points you want AI Notes to pay attention to..."
+            readOnly={readOnly}
+            onChange={(event) => onUpdateManualNotes(event.target.value)}
+          />
+        </div>
+      )}
+      {sourceMode ? (
+        <div className="recording-action-bar">
+          <button onClick={onBackToReview}>Back to Review</button>
+        </div>
+      ) : (
+        <div className="recording-action-bar">
+          <button className="stop-button" aria-label="Stop recording from meeting" onClick={onStopRecording}>
+            Stop Recording
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function ManualSourceList({
+  manualNotes,
+  selectedHumanSourceId,
+}: {
+  manualNotes: string
+  selectedHumanSourceId?: string
+}) {
+  const selectedSourceRef = useRef<HTMLElement | null>(null)
+  const sources = getHumanNoteSources(manualNotes)
+
+  useEffect(() => {
+    selectedSourceRef.current?.scrollIntoView?.({ block: 'center', behavior: 'smooth' })
+  }, [selectedHumanSourceId])
+
+  if (!sources.length) {
+    return (
+      <div className="manual-source-list">
+        <pre>{manualNotes.trim() || 'No human notes captured.'}</pre>
       </div>
-      <div className="marker-bar">
-        {(['Decision', 'Action', 'Question', 'Quote'] as const).map((kind) => (
-          <button key={kind}>{kind}</button>
-        ))}
-        <span className="bar-spacer" />
-        <button className="stop-button" aria-label="Stop recording from meeting" onClick={onStopRecording}>
-          Stop Recording
-        </button>
-      </div>
+    )
+  }
+
+  return (
+    <div className="manual-source-list" aria-label="Human note sources">
+      {sources.map((source) => (
+        <article
+          key={source.id}
+          ref={(node) => {
+            if (source.id === selectedHumanSourceId) selectedSourceRef.current = node
+          }}
+          className={`manual-source-item ${
+            source.id === selectedHumanSourceId ? 'selected-source' : ''
+          }`}
+        >
+          <span>{source.label}</span>
+          <p>{source.text}</p>
+        </article>
+      ))}
     </div>
   )
 }
@@ -757,9 +1201,11 @@ function AiNotesPane({
   transcriptionStatus,
   transcriptionError,
   onRetryTranscriptImport,
-  onUpdateAiNotes,
   contextPreview,
-  onSelectTranscriptSource,
+  onOpenManualSource,
+  onSelectCitation,
+  onUpdateAiNotes,
+  onDeleteRawAudio,
 }: {
   meeting: Meeting
   onRegenerate: () => void | Promise<void>
@@ -772,12 +1218,14 @@ function AiNotesPane({
   transcriptionStatus: TranscriptionStatus
   transcriptionError: string
   onRetryTranscriptImport?: () => void | Promise<void>
-  onUpdateAiNotes: (aiNotes: AiNotes) => void
   contextPreview: string
-  onSelectTranscriptSource: (lineId: string) => void
+  onOpenManualSource: () => void
+  onSelectCitation: (citation: ReviewCitation) => void
+  onUpdateAiNotes: (aiNotes: AiNotes) => void
+  onDeleteRawAudio: () => void | Promise<void>
 }) {
+  const [editing, setEditing] = useState(false)
   const notes = meeting.aiNotes
-  const [isEditingReview, setIsEditingReview] = useState(false)
   const isGenerating = aiGenerationStatus === 'generating'
   const isImportingTranscript = transcriptionStatus === 'importing'
   const generationFailed =
@@ -801,7 +1249,7 @@ function AiNotesPane({
             ? 'Save Failed'
             : 'Save Markdown'
   const hasGenerationContext =
-    meeting.transcript.length > 0 || Boolean(meeting.manualNotes.trim()) || meeting.markers.length > 0
+    meeting.transcript.length > 0 || Boolean(meeting.manualNotes.trim())
   const canGenerateAiNotes = Boolean(notes) || hasGenerationContext
   const regenerateLabel = isGenerating
     ? 'Generating...'
@@ -821,11 +1269,8 @@ function AiNotesPane({
   const emptyTitle = isImportingTranscript ? 'Importing Audio' : 'Generate AI Notes'
   const emptyCopy = isImportingTranscript
     ? 'Transcription is running through the configured STT provider.'
-    : 'Use manual notes, markers, and finalized transcript to create the Review content.'
-  const updateNotes = (patch: Partial<AiNotes>) => {
-    if (!notes) return
-    onUpdateAiNotes({ ...notes, ...patch })
-  }
+    : 'Use manual notes and finalized transcript to create the Review content.'
+  const reviewDocument = notes ? notes.document ?? formatAiNotesDocument(notes) : ''
 
   return (
     <div className="pane jelly-card ai-main">
@@ -840,149 +1285,80 @@ function AiNotesPane({
         }
       />
       {notes ? (
-        <div className="ai-notes" aria-label="AI Notes">
+        <div className="ai-notes review-document" aria-label="AI Notes">
           {generationFailed ? (
             <div className="generation-alert" role="alert">
               <strong>AI Notes were not updated.</strong>
               <span>{generationErrorMessage}</span>
             </div>
           ) : null}
-          <ReviewSourceHighlights meeting={meeting} />
-          <AiSection title="Summary">
-            {isEditingReview ? (
-              <AiTextArea
-                label="AI summary"
-                value={notes.summary}
-                rows={3}
-                onChange={(summary) => updateNotes({ summary })}
-              />
-            ) : (
-              <ReviewParagraph text={notes.summary} />
-            )}
-            <SourceCitations
-              citations={findTranscriptCitations(meeting.transcript, notes.summary)}
-              onSelect={onSelectTranscriptSource}
-            />
-          </AiSection>
-          {isEditingReview ? (
-            <EditableStringListSection
-              title="Decisions"
-              itemLabel="Decision"
-              items={notes.decisions}
-              transcript={meeting.transcript}
-              onChange={(decisions) => updateNotes({ decisions })}
-              onSelectTranscriptSource={onSelectTranscriptSource}
+          <ReviewReferenceBar
+            meeting={meeting}
+            onOpenManualSource={onOpenManualSource}
+            onDeleteRawAudio={onDeleteRawAudio}
+          />
+          {editing ? (
+            <textarea
+              className="review-document-textarea"
+              aria-label="AI Notes document"
+              value={reviewDocument}
+              rows={autoRows(reviewDocument, 18, 72)}
+              onChange={(event) => onUpdateAiNotes({ ...notes, document: event.target.value })}
             />
           ) : (
-            <ReviewStringListSection
-              title="Decisions"
-              items={notes.decisions}
-              transcript={meeting.transcript}
-              onSelectTranscriptSource={onSelectTranscriptSource}
+            <ReviewReadableDocument
+              documentText={reviewDocument}
+              meeting={meeting}
+              onSelectCitation={onSelectCitation}
             />
           )}
-          {isEditingReview ? (
-            <EditableActionItemsSection
-              items={notes.actionItems}
-              transcript={meeting.transcript}
-              onChange={(actionItems) => updateNotes({ actionItems })}
-              onSelectTranscriptSource={onSelectTranscriptSource}
-            />
-          ) : (
-            <ReviewActionItemsSection
-              items={notes.actionItems}
-              transcript={meeting.transcript}
-              onSelectTranscriptSource={onSelectTranscriptSource}
-            />
-          )}
-          {isEditingReview ? (
-            <EditableStringListSection
-              title="Open Questions"
-              itemLabel="Open question"
-              items={notes.openQuestions}
-              transcript={meeting.transcript}
-              onChange={(openQuestions) => updateNotes({ openQuestions })}
-              onSelectTranscriptSource={onSelectTranscriptSource}
-            />
-          ) : (
-            <ReviewStringListSection
-              title="Open Questions"
-              items={notes.openQuestions}
-              transcript={meeting.transcript}
-              onSelectTranscriptSource={onSelectTranscriptSource}
-            />
-          )}
-          {isEditingReview ? (
-            <EditableStringListSection
-              title="Key Points"
-              itemLabel="Key point"
-              items={notes.keyPoints}
-              transcript={meeting.transcript}
-              onChange={(keyPoints) => updateNotes({ keyPoints })}
-              onSelectTranscriptSource={onSelectTranscriptSource}
-            />
-          ) : (
-            <ReviewStringListSection
-              title="Key Points"
-              items={notes.keyPoints}
-              transcript={meeting.transcript}
-              onSelectTranscriptSource={onSelectTranscriptSource}
-            />
-          )}
-          <AiSection title="Follow-up Draft">
-            {isEditingReview ? (
-              <AiTextArea
-                label="Follow-up draft"
-                value={notes.followUpDraft}
-                rows={4}
-                onChange={(followUpDraft) => updateNotes({ followUpDraft })}
-              />
-            ) : (
-              <ReviewParagraph text={notes.followUpDraft} />
-            )}
-            <SourceCitations
-              citations={findTranscriptCitations(meeting.transcript, notes.followUpDraft)}
-              onSelect={onSelectTranscriptSource}
-            />
-          </AiSection>
           <details className="context-preview">
             <summary>Generation context</summary>
             <pre>{contextPreview}</pre>
           </details>
         </div>
       ) : (
-        <div className="empty-generation">
-          <Sparkles size={22} />
-          <h3>{emptyTitle}</h3>
-          <p>{emptyCopy}</p>
-          {transcriptionFailed ? (
-            <div className="generation-alert" role="alert">
-              <strong>Transcript import failed.</strong>
-              <span>{transcriptionErrorMessage}</span>
-              {onRetryTranscriptImport ? (
-                <button className="alert-action" onClick={onRetryTranscriptImport}>
-                  Retry Import
-                </button>
-              ) : null}
-            </div>
-          ) : null}
-          {generationFailed ? (
-            <div className="generation-alert" role="alert">
-              <strong>AI Notes were not generated.</strong>
-              <span>{generationErrorMessage}</span>
-            </div>
-          ) : null}
+        <div className="ai-notes" aria-label="AI Notes">
+          <ReviewReferenceBar
+            meeting={meeting}
+            onOpenManualSource={onOpenManualSource}
+            onDeleteRawAudio={onDeleteRawAudio}
+          />
+          <div className="empty-generation">
+            <Sparkles size={22} />
+            <h3>{emptyTitle}</h3>
+            <p>{emptyCopy}</p>
+            {transcriptionFailed ? (
+              <div className="generation-alert" role="alert">
+                <strong>Transcript import failed.</strong>
+                <span>{transcriptionErrorMessage}</span>
+                {onRetryTranscriptImport ? (
+                  <button className="alert-action" onClick={onRetryTranscriptImport}>
+                    Retry Import
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
+            {generationFailed ? (
+              <div className="generation-alert" role="alert">
+                <strong>AI Notes were not generated.</strong>
+                <span>{generationErrorMessage}</span>
+              </div>
+            ) : null}
+          </div>
         </div>
       )}
-      <div className="marker-bar">
+      <div className="pane-action-bar">
+        {notes ? (
+          <button onClick={() => setEditing((current) => !current)}>
+            {editing ? 'Done Editing' : 'Edit'}
+          </button>
+        ) : null}
         <button
           onClick={onRegenerate}
           disabled={isGenerating || isImportingTranscript || !canGenerateAiNotes}
         >
           {regenerateLabel}
-        </button>
-        <button onClick={() => setIsEditingReview((editing) => !editing)} disabled={!notes}>
-          {isEditingReview ? 'Done Editing' : 'Edit Review'}
         </button>
         <button onClick={onCopyMarkdown} disabled={!notes}>
           {copyLabel}
@@ -995,31 +1371,131 @@ function AiNotesPane({
   )
 }
 
-function ReviewSourceHighlights({ meeting }: { meeting: Meeting }) {
-  const manualNotes = meeting.manualNotes.trim()
-  const hasSourceHighlights = manualNotes || meeting.markers.length > 0
+const reviewDocumentHeadings = new Set([
+  'Review Brief',
+  'Next Steps',
+  'Decisions',
+  'Risks / Follow-ups',
+  'Important Context',
+  'Suggested Follow-up',
+])
 
-  if (!hasSourceHighlights) return null
+function ReviewReadableDocument({
+  documentText,
+  meeting,
+  onSelectCitation,
+}: {
+  documentText: string
+  meeting: Meeting
+  onSelectCitation: (citation: ReviewCitation) => void
+}) {
+  const lines = documentText.split('\n')
+  const firstCitableIndex = lines.findIndex((line) => isCitableReviewLine(line))
+  let usedHumanFallback = false
 
   return (
-    <section className="review-source" aria-label="User recorded context">
-      <div className="review-source-header">
-        <strong>User Notes</strong>
-        <span>{meeting.markers.length} markers</span>
-      </div>
-      {manualNotes ? <p className="review-source-notes">{manualNotes}</p> : null}
-      {meeting.markers.length ? (
-        <div className="review-marker-list" aria-label="User markers">
-          {meeting.markers.map((marker) => (
-            <div className="review-marker" key={marker.id}>
-              <span>{marker.kind}</span>
-              <time>{marker.time}</time>
-              <p>{marker.text}</p>
-            </div>
-          ))}
+    <div className="review-readable-document" aria-label="AI Notes readable document">
+      {lines.map((line, index) => {
+        const trimmedLine = line.trim()
+
+        if (!trimmedLine) return <div key={`blank-${index}`} className="review-readable-gap" />
+
+        if (reviewDocumentHeadings.has(trimmedLine)) {
+          return <h3 key={`heading-${index}`}>{trimmedLine}</h3>
+        }
+
+        const citableText = reviewCitationText(trimmedLine)
+        const includeHumanFallback = index === firstCitableIndex && !usedHumanFallback
+        const citations = findReviewCitations({
+          manualNotes: meeting.manualNotes,
+          transcript: meeting.transcript,
+          text: citableText,
+          includeHumanFallback,
+        })
+        if (citations.some((citation) => citation.type === 'human')) usedHumanFallback = true
+
+        return (
+          <p
+            key={`line-${index}`}
+            className={`review-readable-line ${isReviewBulletLine(trimmedLine) ? 'bullet' : ''}`}
+          >
+            <span>{trimmedLine}</span>
+            <ReviewCitationChips citations={citations} onSelectCitation={onSelectCitation} />
+          </p>
+        )
+      })}
+    </div>
+  )
+}
+
+function ReviewCitationChips({
+  citations,
+  onSelectCitation,
+}: {
+  citations: ReviewCitation[]
+  onSelectCitation: (citation: ReviewCitation) => void
+}) {
+  if (!citations.length) return null
+
+  return (
+    <span className="review-inline-citations" aria-label="Line sources">
+      {citations.map((citation) => (
+        <button
+          key={`${citation.type}-${citation.id}`}
+          className={`review-inline-citation ${citation.type}`}
+          onClick={() => onSelectCitation(citation)}
+          title={citation.type === 'human' ? citation.source.text : citation.line.text}
+        >
+          [{citation.label}]
+        </button>
+      ))}
+    </span>
+  )
+}
+
+function isCitableReviewLine(line: string): boolean {
+  const text = reviewCitationText(line.trim())
+  return text.length >= 18 && !reviewDocumentHeadings.has(text)
+}
+
+function isReviewBulletLine(line: string): boolean {
+  return /^[-*]\s+/.test(line)
+}
+
+function reviewCitationText(line: string): string {
+  return line.replace(/^[-*]\s+/, '').replace(/^\[[ xX]\]\s+/, '').trim()
+}
+
+function ReviewReferenceBar({
+  meeting,
+  onOpenManualSource,
+  onDeleteRawAudio,
+}: {
+  meeting: Meeting
+  onOpenManualSource: () => void
+  onDeleteRawAudio: () => void | Promise<void>
+}) {
+  const manualNotes = meeting.manualNotes.trim()
+  const rawAudio = meeting.rawAudio
+  const hasReferences = Boolean(manualNotes || rawAudio)
+
+  if (!hasReferences) return null
+
+  return (
+    <div className="review-reference-bar" aria-label="Review references">
+      {manualNotes ? (
+        <button className="review-citation-chip" onClick={onOpenManualSource}>
+          Human note<sup>1</sup>
+        </button>
+      ) : null}
+      {rawAudio ? (
+        <div className="review-raw-audio">
+          <strong>Raw audio</strong>
+          <span>{rawAudio.fileName} · {formatDurationMillis(rawAudio.durationMillis)}</span>
+          <button onClick={onDeleteRawAudio}>Delete Raw Audio</button>
         </div>
       ) : null}
-    </section>
+    </div>
   )
 }
 
@@ -1041,7 +1517,13 @@ function TranscriptPane({
   onUpdateTranscript?: (transcript: TranscriptLine[]) => void
 }) {
   const [speakerDrafts, setSpeakerDrafts] = useState<Record<string, string>>({})
+  const [editingLineId, setEditingLineId] = useState<string | undefined>()
+  const selectedLineRef = useRef<HTMLElement | null>(null)
   const speakers = uniqueTranscriptSpeakers(meeting.transcript)
+
+  useEffect(() => {
+    selectedLineRef.current?.scrollIntoView?.({ block: 'center', behavior: 'smooth' })
+  }, [selectedLineId])
 
   const updateLine = (index: number, patch: Partial<TranscriptLine>) => {
     onUpdateTranscript?.(
@@ -1052,17 +1534,20 @@ function TranscriptPane({
   }
   const addLine = () => {
     const lastLine = meeting.transcript.at(-1)
+    const nextLine: TranscriptLine = {
+      id: `${meeting.id}-manual-transcript-${Date.now()}`,
+      time: nextTranscriptTime(lastLine?.time),
+      speaker: lastLine?.speaker || 'Speaker',
+      text: '',
+    }
     onUpdateTranscript?.([
       ...meeting.transcript,
-      {
-        id: `${meeting.id}-manual-transcript-${Date.now()}`,
-        time: nextTranscriptTime(lastLine?.time),
-        speaker: lastLine?.speaker || 'Speaker',
-        text: '',
-      },
+      nextLine,
     ])
+    setEditingLineId(nextLine.id)
   }
   const deleteLine = (index: number) => {
+    setEditingLineId(undefined)
     onUpdateTranscript?.(meeting.transcript.filter((_, lineIndex) => lineIndex !== index))
   }
   const updateSpeakerDraft = (speaker: string, value: string) => {
@@ -1088,11 +1573,22 @@ function TranscriptPane({
     <aside className="pane jelly-card transcript-pane" aria-label={title}>
       <PaneHeader title={title} subtitle={subtitle} aside={live ? <span className="chip">Live</span> : <span className="chip">Source</span>} />
       <div className="transcript-list">
-        {meeting.transcript.map((line, index) =>
-          editable ? (
+        {meeting.transcript.map((line, index) => {
+          const isEditing = editable && editingLineId === line.id
+          const lineClass = `transcript-line ${
+            line.id === selectedLineId ? 'selected-source' : ''
+          }`
+
+          if (isEditing) {
+            return (
             <div
               key={line.id}
-              className={`transcript-line transcript-edit-line ${line.id === selectedLineId ? 'selected-source' : ''}`}
+              ref={(node) => {
+                if (line.id === selectedLineId) selectedLineRef.current = node
+              }}
+              className={`transcript-line transcript-edit-line ${
+                line.id === selectedLineId ? 'selected-source' : ''
+              }`}
             >
               <time>{line.time}</time>
               <div className="transcript-edit-fields">
@@ -1116,17 +1612,49 @@ function TranscriptPane({
                 >
                   Delete
                 </button>
+                <button className="transcript-done" onClick={() => setEditingLineId(undefined)}>
+                  Done
+                </button>
               </div>
             </div>
-          ) : (
-            <div key={line.id} className={`transcript-line ${line.id === selectedLineId ? 'selected-source' : ''}`}>
+            )
+          }
+
+          if (editable) {
+            return (
+              <button
+                key={line.id}
+                type="button"
+                ref={(node) => {
+                  if (line.id === selectedLineId) selectedLineRef.current = node
+                }}
+                className={`${lineClass} transcript-readable-line`}
+                aria-label={`Edit transcript line ${index + 1}`}
+                onClick={() => setEditingLineId(line.id)}
+              >
+                <time>{line.time}</time>
+                <p>
+                  <strong>{line.speaker}:</strong> {line.text}
+                </p>
+              </button>
+            )
+          }
+
+          return (
+            <div
+              key={line.id}
+              ref={(node) => {
+                if (line.id === selectedLineId) selectedLineRef.current = node
+              }}
+              className={lineClass}
+            >
               <time>{line.time}</time>
               <p>
                 <strong>{line.speaker}:</strong> {line.text}
               </p>
             </div>
-          ),
-        )}
+          )
+        })}
       </div>
       {editable ? (
         <div className="transcript-actions">
@@ -1201,26 +1729,34 @@ function SettingsPage({
   storageMode,
   onSelectPane,
   onUpdateSettings,
-  apiKeyConfigured,
+  apiKeyConfiguredByProvider,
+  apiKeyProvider,
   apiKeyDraft,
   apiKeyStatus,
   apiKeyError,
+  apiConnectionStatus,
+  apiConnectionResult,
+  onApiKeyProviderChange,
   onApiKeyDraftChange,
   onSaveApiKey,
-  onDeleteApiKey,
+  onTestApiKey,
 }: {
   activePane: SettingsPane
   settings: AppSettings
   storageMode: 'browser' | 'desktop'
   onSelectPane: (pane: SettingsPane) => void
   onUpdateSettings: (patch: Partial<AppSettings>) => void
-  apiKeyConfigured: boolean
+  apiKeyConfiguredByProvider: ApiKeyConfiguredMap
+  apiKeyProvider: ApiProviderId
   apiKeyDraft: string
   apiKeyStatus: ApiKeyStatus
   apiKeyError: string
+  apiConnectionStatus: ApiConnectionStatus
+  apiConnectionResult?: ProviderConnectionTestResult
+  onApiKeyProviderChange: (provider: ApiProviderId) => void
   onApiKeyDraftChange: (value: string) => void
-  onSaveApiKey: () => void | Promise<void>
-  onDeleteApiKey: () => void | Promise<void>
+  onSaveApiKey: (provider?: ApiProviderId, draft?: string) => void | Promise<void>
+  onTestApiKey: (provider?: ApiProviderId) => void | Promise<void>
 }) {
   return (
     <section className="settings-layout" aria-label="Settings">
@@ -1244,13 +1780,17 @@ function SettingsPage({
           settings={settings}
           storageMode={storageMode}
           onUpdateSettings={onUpdateSettings}
-          apiKeyConfigured={apiKeyConfigured}
+          apiKeyConfiguredByProvider={apiKeyConfiguredByProvider}
+          apiKeyProvider={apiKeyProvider}
           apiKeyDraft={apiKeyDraft}
           apiKeyStatus={apiKeyStatus}
           apiKeyError={apiKeyError}
+          apiConnectionStatus={apiConnectionStatus}
+          apiConnectionResult={apiConnectionResult}
+          onApiKeyProviderChange={onApiKeyProviderChange}
           onApiKeyDraftChange={onApiKeyDraftChange}
           onSaveApiKey={onSaveApiKey}
-          onDeleteApiKey={onDeleteApiKey}
+          onTestApiKey={onTestApiKey}
         />
       </div>
     </section>
@@ -1262,29 +1802,51 @@ function SettingsContent({
   settings,
   storageMode,
   onUpdateSettings,
-  apiKeyConfigured,
+  apiKeyConfiguredByProvider,
+  apiKeyProvider,
   apiKeyDraft,
   apiKeyStatus,
   apiKeyError,
+  apiConnectionStatus,
+  apiConnectionResult,
+  onApiKeyProviderChange,
   onApiKeyDraftChange,
   onSaveApiKey,
-  onDeleteApiKey,
+  onTestApiKey,
 }: {
   activePane: SettingsPane
   settings: AppSettings
   storageMode: 'browser' | 'desktop'
   onUpdateSettings: (patch: Partial<AppSettings>) => void
-  apiKeyConfigured: boolean
+  apiKeyConfiguredByProvider: ApiKeyConfiguredMap
+  apiKeyProvider: ApiProviderId
   apiKeyDraft: string
   apiKeyStatus: ApiKeyStatus
   apiKeyError: string
+  apiConnectionStatus: ApiConnectionStatus
+  apiConnectionResult?: ProviderConnectionTestResult
+  onApiKeyProviderChange: (provider: ApiProviderId) => void
   onApiKeyDraftChange: (value: string) => void
-  onSaveApiKey: () => void | Promise<void>
-  onDeleteApiKey: () => void | Promise<void>
+  onSaveApiKey: (provider?: ApiProviderId, draft?: string) => void | Promise<void>
+  onTestApiKey: (provider?: ApiProviderId) => void | Promise<void>
 }) {
-  if (activePane === 'audio') {
+  const realtimeKeyProvider = providerKeyForRealtime(settings.realtimeTranscriptionProvider)
+  const audioImportKeyProvider = providerKeyForBatch(settings.transcriptionProvider)
+  const aiNotesKeyProvider = providerKeyForAiNotes(settings.aiProvider)
+
+  if (activePane === 'general') {
     return (
       <div className="settings-form">
+        <FieldGroup label="Capture mode">
+          <SegmentedControl
+            left="Focus first"
+            right="Split view"
+            value={settings.meetingPreference === 'focus-first' ? 'left' : 'right'}
+            onChange={(value) =>
+              onUpdateSettings({ meetingPreference: value === 'left' ? 'focus-first' : 'split-view' })
+            }
+          />
+        </FieldGroup>
         <FieldGroup label="Capture source">
           <SegmentedControl
             left="Mic + System"
@@ -1294,6 +1856,17 @@ function SettingsContent({
               onUpdateSettings({ captureSource: value === 'left' ? 'mic-system' : 'microphone-only' })
             }
           />
+        </FieldGroup>
+        <FieldGroup label="Desktop controls">
+          <ToggleRow
+            title="Desktop capsule"
+            description="Show the floating logo for one-click meeting capture."
+            checked={settings.desktopCapsuleEnabled}
+            onToggle={() =>
+              onUpdateSettings({ desktopCapsuleEnabled: !settings.desktopCapsuleEnabled })
+            }
+          />
+          <SettingsInput label="Start shortcut" value={MEETING_GLOBAL_SHORTCUT_LABEL} readOnly />
         </FieldGroup>
         <FieldGroup label="System audio">
           <ToggleRow
@@ -1309,27 +1882,69 @@ function SettingsContent({
             onToggle={() => onUpdateSettings({ saveRawAudio: !settings.saveRawAudio })}
           />
         </FieldGroup>
+        <FieldGroup label="Privacy">
+          <ToggleRow
+            title="Hide transcript"
+            description="Show original transcript only in Review."
+            checked={settings.hideTranscriptByDefault}
+            onToggle={() => onUpdateSettings({ hideTranscriptByDefault: !settings.hideTranscriptByDefault })}
+          />
+          <ToggleRow
+            title="No public links"
+            description="Keep exported notes local by default."
+            checked={settings.noPublicLinks}
+            onToggle={() => onUpdateSettings({ noPublicLinks: !settings.noPublicLinks })}
+          />
+        </FieldGroup>
+        <FieldGroup label="Security">
+          <ToggleRow
+            title="Use OS keychain"
+            description="Keep API keys outside regular app settings."
+            checked={settings.useKeychain}
+            onToggle={() => onUpdateSettings({ useKeychain: !settings.useKeychain })}
+          />
+        </FieldGroup>
       </div>
     )
   }
 
-  if (activePane === 'ai') {
-    const usesProviderMode =
-      settings.transcriptionMode === 'provider' || settings.notesMode === 'provider'
-
+  if (activePane === 'transcription') {
     return (
       <div className="settings-form">
-        <FieldGroup label="Provider">
-          <SegmentedControl
-            left="OpenAI Compatible"
-            right="Ollama"
-            value={settings.aiProvider === 'openai-compatible' ? 'left' : 'right'}
-            onChange={(value) =>
-              onUpdateSettings({ aiProvider: value === 'left' ? 'openai-compatible' : 'ollama' })
-            }
+        <FieldGroup label="Realtime transcript">
+          <SettingsSelect
+            label="Provider"
+            options={realtimeProviderOptions}
+            value={settings.realtimeTranscriptionProvider}
+            onChange={(realtimeTranscriptionProvider) => {
+              onUpdateSettings({
+                realtimeTranscriptionProvider,
+                realtimeModel: defaultRealtimeModel(realtimeTranscriptionProvider),
+              })
+              onApiKeyProviderChange(providerKeyForRealtime(realtimeTranscriptionProvider))
+            }}
+          />
+          <ApiKeySettingField
+            provider={realtimeKeyProvider}
+            configured={Boolean(apiKeyConfiguredByProvider[realtimeKeyProvider])}
+            selected={apiKeyProvider === realtimeKeyProvider}
+            draft={apiKeyDraft}
+            status={apiKeyStatus}
+            error={apiKeyError}
+            connectionStatus={apiConnectionStatus}
+            connectionResult={apiConnectionResult}
+            onSelect={() => onApiKeyProviderChange(realtimeKeyProvider)}
+            onDraftChange={onApiKeyDraftChange}
+            onSave={onSaveApiKey}
+            onTest={onTestApiKey}
+          />
+          <SettingsInput
+            label="Model"
+            value={settings.realtimeModel}
+            onChange={(realtimeModel) => onUpdateSettings({ realtimeModel })}
           />
         </FieldGroup>
-        <FieldGroup label="Transcription">
+        <FieldGroup label="Audio import">
           <SegmentedControl
             left="Provider STT"
             right="Local Demo STT"
@@ -1338,7 +1953,63 @@ function SettingsContent({
               onUpdateSettings({ transcriptionMode: value === 'left' ? 'provider' : 'local-demo' })
             }
           />
+          {settings.transcriptionMode === 'provider' ? (
+            <>
+              <SettingsSelect
+                label="Provider"
+                options={batchSttProviderOptions}
+                value={settings.transcriptionProvider}
+                onChange={(transcriptionProvider) => {
+                  onUpdateSettings({
+                    transcriptionProvider,
+                    transcriptionBaseUrl: defaultTranscriptionBaseUrl(transcriptionProvider),
+                    sttModel: defaultTranscriptionModel(transcriptionProvider),
+                  })
+                  onApiKeyProviderChange(providerKeyForBatch(transcriptionProvider))
+                }}
+              />
+              {audioImportKeyProvider === realtimeKeyProvider ? (
+                <p className="settings-hint">
+                  Uses the same {providerLabel(audioImportKeyProvider)} API key as realtime transcript.
+                </p>
+              ) : (
+                <ApiKeySettingField
+                  provider={audioImportKeyProvider}
+                  configured={Boolean(apiKeyConfiguredByProvider[audioImportKeyProvider])}
+                  selected={apiKeyProvider === audioImportKeyProvider}
+                  draft={apiKeyDraft}
+                  status={apiKeyStatus}
+                  error={apiKeyError}
+                  connectionStatus={apiConnectionStatus}
+                  connectionResult={apiConnectionResult}
+                  onSelect={() => onApiKeyProviderChange(audioImportKeyProvider)}
+                  onDraftChange={onApiKeyDraftChange}
+                  onSave={onSaveApiKey}
+                  onTest={onTestApiKey}
+                />
+              )}
+              <SettingsInput
+                label="Model"
+                value={settings.sttModel}
+                onChange={(sttModel) => onUpdateSettings({ sttModel })}
+              />
+              {settings.transcriptionProvider === 'openai-compatible' ? (
+                <SettingsInput
+                  label="Base URL"
+                  value={settings.transcriptionBaseUrl}
+                  onChange={(transcriptionBaseUrl) => onUpdateSettings({ transcriptionBaseUrl })}
+                />
+              ) : null}
+            </>
+          ) : null}
         </FieldGroup>
+      </div>
+    )
+  }
+
+  if (activePane === 'aiNotes') {
+    return (
+      <div className="settings-form">
         <FieldGroup label="AI Notes">
           <SegmentedControl
             left="Provider LLM"
@@ -1348,62 +2019,53 @@ function SettingsContent({
               onUpdateSettings({ notesMode: value === 'left' ? 'provider' : 'local-demo' })
             }
           />
-        </FieldGroup>
-        {usesProviderMode ? (
-          <>
-            <FieldGroup label="Connection">
-              <SettingsInput
-                label="Base URL"
-                value={settings.aiBaseUrl}
-                onChange={(aiBaseUrl) => onUpdateSettings({ aiBaseUrl })}
+          {settings.notesMode === 'provider' ? (
+            <>
+              <SettingsSelect
+                label="Provider"
+                options={aiNotesProviderOptions}
+                value={settings.aiProvider}
+                onChange={(aiProvider) => {
+                  onUpdateSettings({
+                    aiProvider,
+                    aiBaseUrl: defaultNotesBaseUrl(aiProvider),
+                    notesModel: defaultNotesModel(aiProvider),
+                  })
+                  const keyProvider = providerKeyForAiNotes(aiProvider)
+                  if (keyProvider) onApiKeyProviderChange(keyProvider)
+                }}
+              />
+              <ApiKeySettingField
+                provider={aiNotesKeyProvider}
+                configured={aiNotesKeyProvider ? Boolean(apiKeyConfiguredByProvider[aiNotesKeyProvider]) : false}
+                selected={aiNotesKeyProvider ? apiKeyProvider === aiNotesKeyProvider : false}
+                draft={apiKeyDraft}
+                status={apiKeyStatus}
+                error={apiKeyError}
+                connectionStatus={apiConnectionStatus}
+                connectionResult={apiConnectionResult}
+                onSelect={() => {
+                  if (aiNotesKeyProvider) onApiKeyProviderChange(aiNotesKeyProvider)
+                }}
+                onDraftChange={onApiKeyDraftChange}
+                onSave={onSaveApiKey}
+                onTest={onTestApiKey}
               />
               <SettingsInput
-                label="STT model"
-                value={settings.sttModel}
-                onChange={(sttModel) => onUpdateSettings({ sttModel })}
-              />
-              <SettingsInput
-                label="Notes model"
+                label="Model"
                 value={settings.notesModel}
                 onChange={(notesModel) => onUpdateSettings({ notesModel })}
               />
-            </FieldGroup>
-            <FieldGroup label="Keys">
-              <ToggleRow
-                title="Use OS keychain"
-                description="API keys stay outside meeting records."
-                checked={settings.useKeychain}
-                onToggle={() => onUpdateSettings({ useKeychain: !settings.useKeychain })}
-              />
-              <SettingsInput
-                label="API key"
-                type="password"
-                value={apiKeyDraft}
-                onChange={onApiKeyDraftChange}
-              />
-              <div className="key-actions">
-                <span className={`key-status ${apiKeyConfigured ? 'configured' : ''}`}>
-                  {apiKeyConfigured ? 'Configured' : 'Not configured'}
-                </span>
-                <button className="settings-action" onClick={onSaveApiKey} disabled={apiKeyStatus === 'saving'}>
-                  {apiKeyStatus === 'saving' ? 'Saving' : 'Save Key'}
-                </button>
-                <button
-                  className="settings-action"
-                  onClick={onDeleteApiKey}
-                  disabled={!apiKeyConfigured || apiKeyStatus === 'saving'}
-                >
-                  Delete Key
-                </button>
-              </div>
-              {apiKeyStatus === 'error' ? (
-                <p className="settings-error" role="alert">
-                  {apiKeyError || 'Could not update API key.'}
-                </p>
+              {settings.aiProvider === 'openai-compatible' || settings.aiProvider === 'ollama' ? (
+                <SettingsInput
+                  label="Base URL"
+                  value={settings.aiBaseUrl}
+                  onChange={(aiBaseUrl) => onUpdateSettings({ aiBaseUrl })}
+                />
               ) : null}
-            </FieldGroup>
-          </>
-        ) : null}
+            </>
+          ) : null}
+        </FieldGroup>
       </div>
     )
   }
@@ -1412,11 +2074,7 @@ function SettingsContent({
     return (
       <div className="settings-form">
         <FieldGroup label="Markdown">
-          <SettingsInput
-            label="Default folder"
-            value={settings.exportFolder}
-            onChange={(exportFolder) => onUpdateSettings({ exportFolder })}
-          />
+          <SettingsInput label="Default folder" value={settings.exportFolder} readOnly />
           <ToggleRow
             title="Include transcript"
             description="Off by default for exported AI Notes."
@@ -1427,31 +2085,44 @@ function SettingsContent({
           />
         </FieldGroup>
         <FieldGroup label="Integrations">
-          <SettingsInput
-            label="Slack"
-            value={settings.slackWebhookLabel}
-            onChange={(slackWebhookLabel) => onUpdateSettings({ slackWebhookLabel })}
-          />
-          <SettingsInput
-            label="Notion"
-            value={settings.notionExportLabel}
-            onChange={(notionExportLabel) => onUpdateSettings({ notionExportLabel })}
-          />
-        </FieldGroup>
-      </div>
-    )
-  }
-
-  if (activePane === 'about') {
-    return (
-      <div className="settings-form">
-        <FieldGroup label="Build">
-          <SettingsInput
-            label="Storage"
-            value={storageMode === 'desktop' ? 'SQLite app data' : 'Browser storage'}
-            readOnly
-          />
-          <SettingsInput label="License" value="MIT" readOnly />
+          <div className="integration-grid">
+            <IntegrationTile
+              provider="slack"
+              title="Slack"
+              status="Webhook"
+              description="Send AI Notes to a channel after Review."
+            >
+              <SettingsInput
+                label="Destination"
+                value={settings.slackWebhookLabel}
+                onChange={(slackWebhookLabel) => onUpdateSettings({ slackWebhookLabel })}
+              />
+            </IntegrationTile>
+            <IntegrationTile
+              provider="notion"
+              title="Notion"
+              status="Page"
+              description="Export Review notes to a workspace page."
+            >
+              <SettingsInput
+                label="Destination"
+                value={settings.notionExportLabel}
+                onChange={(notionExportLabel) => onUpdateSettings({ notionExportLabel })}
+              />
+            </IntegrationTile>
+            <IntegrationTile
+              provider="zoom"
+              title="Zoom"
+              status="Coming soon"
+              description="Detect meetings and attach notes later."
+            />
+            <IntegrationTile
+              provider="teams"
+              title="Teams"
+              status="Coming soon"
+              description="Attach notes to Microsoft Teams meetings."
+            />
+          </div>
         </FieldGroup>
       </div>
     )
@@ -1459,44 +2130,12 @@ function SettingsContent({
 
   return (
     <div className="settings-form">
-      <FieldGroup label="Capture mode">
-        <SegmentedControl
-          left="Mic + System"
-          right="Microphone Only"
-          value={settings.captureSource === 'mic-system' ? 'left' : 'right'}
-          onChange={(value) =>
-            onUpdateSettings({ captureSource: value === 'left' ? 'mic-system' : 'microphone-only' })
-          }
-        />
+      <FieldGroup label="Build">
+        <SettingsInput label="Version" value="0.1.0" readOnly />
+        <SettingsInput label="Storage" value={storageMode === 'desktop' ? 'Desktop store' : 'Browser preview'} readOnly />
       </FieldGroup>
-      <FieldGroup label="Meeting mode">
-        <SegmentedControl
-          left="Focus First"
-          right="Split View"
-          value={settings.meetingPreference === 'focus-first' ? 'left' : 'right'}
-          onChange={(value) =>
-            onUpdateSettings({ meetingPreference: value === 'left' ? 'focus-first' : 'split-view' })
-          }
-        />
-      </FieldGroup>
-      <FieldGroup label="Privacy">
-        <ToggleRow
-          title="Local notes"
-          description="Meetings stay on this device unless exported."
-          checked
-        />
-        <ToggleRow
-          title="Hide transcript by default in Review"
-          description="AI Notes are primary; transcript stays as source."
-          checked={settings.hideTranscriptByDefault}
-          onToggle={() => onUpdateSettings({ hideTranscriptByDefault: !settings.hideTranscriptByDefault })}
-        />
-        <ToggleRow
-          title="No public links"
-          description="Sharing starts private."
-          checked={settings.noPublicLinks}
-          onToggle={() => onUpdateSettings({ noPublicLinks: !settings.noPublicLinks })}
-        />
+      <FieldGroup label="License">
+        <SettingsInput label="Type" value="MIT" readOnly />
       </FieldGroup>
     </div>
   )
@@ -1531,272 +2170,28 @@ function ModeSwitch({ active }: { active: 'focus' | 'review' }) {
   )
 }
 
-function SourceCitations({
-  citations,
-  onSelect,
-}: {
-  citations: TranscriptCitation[]
-  onSelect?: (lineId: string) => void
-}) {
-  if (!citations.length || !onSelect) return null
-
-  return (
-    <div className="source-citations" aria-label="Source transcript links">
-      {citations.map(({ line }) => (
-        <button key={line.id} onClick={() => onSelect(line.id)}>
-          Source {line.time} {line.speaker}
-        </button>
-      ))}
-    </div>
-  )
-}
-
-function AiSection({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <section className="ai-section">
-      <h3>{title}</h3>
-      {children}
-    </section>
-  )
-}
-
-function ReviewParagraph({ text }: { text: string }) {
-  return <p className="review-paragraph">{text.trim() || 'None yet.'}</p>
-}
-
-function ReviewStringListSection({
-  title,
-  items,
-  transcript = [],
-  onSelectTranscriptSource,
-}: {
-  title: string
-  items: string[]
-  transcript?: TranscriptLine[]
-  onSelectTranscriptSource?: (lineId: string) => void
-}) {
-  const visibleItems = items.map((item) => item.trim()).filter(Boolean)
-
-  return (
-    <AiSection title={title}>
-      {visibleItems.length ? (
-        <ul className="document-list">
-          {visibleItems.map((item, index) => (
-            <li key={`${title}-${index}`}>
-              <span>{item}</span>
-              <SourceCitations
-                citations={findTranscriptCitations(transcript, item)}
-                onSelect={onSelectTranscriptSource}
-              />
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <p className="review-empty">None yet.</p>
-      )}
-    </AiSection>
-  )
-}
-
-function ReviewActionItemsSection({
-  items,
-  transcript = [],
-  onSelectTranscriptSource,
-}: {
-  items: ActionItem[]
-  transcript?: TranscriptLine[]
-  onSelectTranscriptSource?: (lineId: string) => void
-}) {
-  const visibleItems = items.filter((item) => item.text.trim())
-
-  return (
-    <AiSection title="Action Items">
-      {visibleItems.length ? (
-        <ul className="action-document-list">
-          {visibleItems.map((item, index) => (
-            <li key={item.id || `action-${index}`}>
-              <span className="action-check" aria-hidden="true" />
-              <div className="action-document-content">
-                <p>{item.text}</p>
-                {item.owner ? <span className="action-owner">{item.owner}</span> : null}
-                <SourceCitations
-                  citations={findTranscriptCitations(transcript, item.text)}
-                  onSelect={onSelectTranscriptSource}
-                />
-              </div>
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <p className="review-empty">None yet.</p>
-      )}
-    </AiSection>
-  )
-}
-
-function AiTextArea({
-  label,
-  value,
-  rows = 2,
-  onChange,
-  onBlur,
-}: {
-  label: string
-  value: string
-  rows?: number
-  onChange: (value: string) => void
-  onBlur?: () => void
-}) {
-  const effectiveRows = autoRows(value, rows, 72)
-
-  return (
-    <textarea
-      className="ai-edit-field"
-      aria-label={label}
-      rows={effectiveRows}
-      value={value}
-      onChange={(event) => onChange(event.target.value)}
-      onBlur={onBlur}
-    />
-  )
-}
-
-function EditableStringListSection({
-  title,
-  itemLabel,
-  items,
-  transcript = [],
-  onChange,
-  onSelectTranscriptSource,
-}: {
-  title: string
-  itemLabel: string
-  items: string[]
-  transcript?: TranscriptLine[]
-  onChange: (items: string[]) => void
-  onSelectTranscriptSource?: (lineId: string) => void
-}) {
-  const visibleItems = items.length ? items : ['']
-
-  const updateItem = (index: number, value: string) => {
-    onChange(visibleItems.map((item, itemIndex) => (itemIndex === index ? value : item)))
-  }
-  const compactItems = () => {
-    onChange(visibleItems.map((item) => item.trim()).filter(Boolean))
-  }
-
-  return (
-    <AiSection title={title}>
-      <div className="editable-list">
-        {visibleItems.map((item, index) => (
-          <div className="document-list-row" key={`${itemLabel}-${index}`}>
-            <span className="document-bullet" aria-hidden="true" />
-            <div className="document-list-content">
-              <AiTextArea
-                label={`${itemLabel} ${index + 1}`}
-                value={item}
-                rows={1}
-                onChange={(value) => updateItem(index, value)}
-                onBlur={compactItems}
-              />
-              <SourceCitations
-                citations={findTranscriptCitations(transcript, item)}
-                onSelect={onSelectTranscriptSource}
-              />
-            </div>
-          </div>
-        ))}
-        <button className="inline-add" onClick={() => onChange([...items, ''])}>
-          Add
-        </button>
-      </div>
-    </AiSection>
-  )
-}
-
-function EditableActionItemsSection({
-  items,
-  transcript = [],
-  onChange,
-  onSelectTranscriptSource,
-}: {
-  items: ActionItem[]
-  transcript?: TranscriptLine[]
-  onChange: (items: ActionItem[]) => void
-  onSelectTranscriptSource?: (lineId: string) => void
-}) {
-  const visibleItems = items.length ? items : [{ id: 'a1', text: '' }]
-
-  const updateItem = (index: number, patch: Partial<ActionItem>) => {
-    onChange(
-      visibleItems.map((item, itemIndex) =>
-        itemIndex === index ? normalizeActionItem({ ...item, ...patch }, index) : item,
-      ),
-    )
-  }
-  const compactItems = () => {
-    onChange(
-      visibleItems
-        .map((item, index) => normalizeActionItem(item, index))
-        .filter((item) => item.text.trim()),
-    )
-  }
-
-  return (
-    <AiSection title="Action Items">
-      <div className="editable-list">
-        {visibleItems.map((item, index) => (
-          <div className="action-edit-row document-list-row" key={item.id || `action-${index}`}>
-            <span className="document-bullet" aria-hidden="true" />
-            <div className="document-list-content">
-              <AiTextArea
-                label={`Action item ${index + 1}`}
-                value={item.text}
-                rows={2}
-                onChange={(text) => updateItem(index, { text })}
-                onBlur={compactItems}
-              />
-              <SourceCitations
-                citations={findTranscriptCitations(transcript, item.text)}
-                onSelect={onSelectTranscriptSource}
-              />
-            </div>
-            <input
-              className="ai-edit-input"
-              aria-label={`Action owner ${index + 1}`}
-              value={item.owner ?? ''}
-              onChange={(event) => updateItem(index, { owner: event.target.value })}
-              onBlur={compactItems}
-            />
-          </div>
-        ))}
-        <button
-          className="inline-add"
-          onClick={() => onChange([...items, { id: `a${items.length + 1}`, text: '' }])}
-        >
-          Add
-        </button>
-      </div>
-    </AiSection>
-  )
-}
-
-function normalizeActionItem(item: ActionItem, index: number): ActionItem {
-  return {
-    id: item.id || `a${index + 1}`,
-    text: item.text,
-    owner: item.owner?.trim() ? item.owner : undefined,
-    due: item.due?.trim() ? item.due : undefined,
-  }
-}
-
 function StatusLabel({ phase, compact = false }: { phase: MeetingPhase; compact?: boolean }) {
+  if (phase === 'recording') return null
+
   const label = statusLabel(phase, compact)
   return <span className={`status ${statusClass(phase)}`}>{label}</span>
 }
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : 'Unknown error.'
+}
+
+function upsertTranscriptLine(transcript: TranscriptLine[], line: TranscriptLine): TranscriptLine[] {
+  const existingIndex = transcript.findIndex((existing) => existing.id === line.id)
+  if (existingIndex >= 0) {
+    return transcript.map((existing, index) => (index === existingIndex ? line : existing))
+  }
+
+  if (transcript.some((existing) => existing.text.trim() === line.text.trim() && existing.text.trim())) {
+    return transcript
+  }
+
+  return [...transcript, line]
 }
 
 function isNoActiveAudioCaptureError(error: unknown): boolean {
@@ -1809,6 +2204,22 @@ function autoRows(value: string, minimum: number, charsPerLine: number): number 
   return Math.max(minimum, hardLines, softLines || 1)
 }
 
+function formatDurationMillis(durationMillis: number): string {
+  const totalSeconds = Math.max(0, Math.round(durationMillis / 1000))
+  const minutes = Math.floor(totalSeconds / 60)
+  const seconds = totalSeconds % 60
+
+  if (minutes === 0) return `${seconds}s`
+  return `${minutes}m ${seconds.toString().padStart(2, '0')}s`
+}
+
+function formatClockDuration(durationMillis: number): string {
+  const totalSeconds = Math.max(0, Math.floor(durationMillis / 1000))
+  const minutes = Math.floor(totalSeconds / 60)
+  const seconds = totalSeconds % 60
+
+  return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`
+}
 
 function uniqueTranscriptSpeakers(transcript: TranscriptLine[]): string[] {
   return Array.from(new Set(transcript.map((line) => normalizeSpeakerName(line.speaker))))
@@ -1833,12 +2244,277 @@ function nextTranscriptTime(time?: string): string {
   return `${nextMinutes.toString().padStart(2, '0')}:${nextSeconds.toString().padStart(2, '0')}`
 }
 
+function defaultRealtimeModel(provider: RealtimeTranscriptionProviderId): string {
+  if (provider === 'doubao-realtime') return 'bigmodel'
+  if (provider === 'deepgram') return 'nova-3'
+  if (provider === 'assemblyai') return 'universal-streaming'
+  return 'gpt-realtime-whisper'
+}
+
+function defaultTranscriptionBaseUrl(provider: BatchTranscriptionProviderId): string {
+  if (provider === 'groq') return 'https://api.groq.com/openai/v1'
+  return 'https://api.openai.com/v1'
+}
+
+function defaultTranscriptionModel(provider: BatchTranscriptionProviderId): string {
+  if (provider === 'groq') return 'whisper-large-v3-turbo'
+  if (provider === 'doubao') return 'bigmodel'
+  if (provider === 'openai-compatible') return 'whisper-1'
+  return 'gpt-4o-mini-transcribe'
+}
+
+function defaultNotesBaseUrl(provider: AppSettings['aiProvider']): string {
+  if (provider === 'groq') return 'https://api.groq.com/openai/v1'
+  if (provider === 'openrouter') return 'https://openrouter.ai/api/v1'
+  if (provider === 'ollama') return 'http://localhost:11434/v1'
+  return 'https://api.openai.com/v1'
+}
+
+function defaultNotesModel(provider: AppSettings['aiProvider']): string {
+  if (provider === 'groq') return 'llama-3.3-70b-versatile'
+  if (provider === 'openrouter') return 'openai/gpt-4o-mini'
+  if (provider === 'ollama') return 'llama3.1:8b'
+  return 'gpt-4.1-mini'
+}
+
+function providerTestBaseUrl(provider: ApiProviderId, settings: AppSettings): string | undefined {
+  if (provider === 'ollama') return settings.aiBaseUrl
+  if (provider === 'openai-compatible') {
+    return settings.aiProvider === 'openai-compatible'
+      ? settings.aiBaseUrl
+      : settings.transcriptionBaseUrl
+  }
+  return undefined
+}
+
+function recommendedApiKeyProvider(settings: AppSettings): ApiProviderId {
+  return providerKeyForRealtime(settings.realtimeTranscriptionProvider)
+}
+
+function providerKeyForRealtime(provider: RealtimeTranscriptionProviderId): ApiProviderId {
+  if (provider === 'doubao-realtime') return 'doubao'
+  if (provider === 'deepgram') return 'deepgram'
+  if (provider === 'assemblyai') return 'assemblyai'
+  return 'openai'
+}
+
+function providerKeyForBatch(provider: BatchTranscriptionProviderId): ApiProviderId {
+  return provider
+}
+
+function providerKeyForAiNotes(provider: AppSettings['aiProvider']): ApiProviderId | undefined {
+  return provider === 'ollama' ? undefined : provider
+}
+
+function providerLabel(provider: string): string {
+  if (provider === 'openai') return 'OpenAI'
+  if (provider === 'openai-compatible') return 'Compatible'
+  if (provider === 'openai-realtime') return 'OpenAI RT'
+  if (provider === 'groq') return 'Groq'
+  if (provider === 'openrouter') return 'OpenRouter'
+  if (provider === 'doubao' || provider === 'doubao-realtime') return 'Doubao'
+  if (provider === 'deepgram') return 'Deepgram'
+  if (provider === 'assemblyai') return 'AssemblyAI'
+  if (provider === 'ollama') return 'Ollama'
+  if (provider === 'slack') return 'Slack'
+  if (provider === 'notion') return 'Notion'
+  if (provider === 'zoom') return 'Zoom'
+  if (provider === 'teams') return 'Teams'
+  return provider
+}
+
+function providerLogoText(provider: string): string {
+  if (provider === 'openrouter') return 'OR'
+  if (provider === 'openai-compatible') return '{}'
+  if (provider === 'assemblyai') return 'A'
+  if (provider === 'deepgram') return 'D'
+  if (provider === 'doubao' || provider === 'doubao-realtime') return '豆'
+  if (provider === 'slack') return '#'
+  if (provider === 'notion') return 'N'
+  if (provider === 'zoom') return 'Z'
+  if (provider === 'teams') return 'T'
+  return providerLabel(provider).slice(0, 2)
+}
+
+function brandClass(provider: string): string {
+  return provider.replace(/[^a-z0-9]/gi, '-').toLowerCase()
+}
+
+function BrandLogo({ provider }: { provider: string }) {
+  return (
+    <span className={`brand-logo brand-${brandClass(provider)}`} aria-hidden="true">
+      {providerLogoText(provider)}
+    </span>
+  )
+}
+
+function ApiKeySettingField({
+  provider,
+  configured,
+  selected,
+  draft,
+  status,
+  error,
+  connectionStatus,
+  connectionResult,
+  onSelect,
+  onDraftChange,
+  onSave,
+  onTest,
+}: {
+  provider?: ApiProviderId
+  configured: boolean
+  selected: boolean
+  draft: string
+  status: ApiKeyStatus
+  error: string
+  connectionStatus: ApiConnectionStatus
+  connectionResult?: ProviderConnectionTestResult
+  onSelect: () => void
+  onDraftChange: (value: string) => void
+  onSave: (provider?: ApiProviderId, draft?: string) => void | Promise<void>
+  onTest: (provider?: ApiProviderId) => void | Promise<void>
+}) {
+  if (!provider) {
+    return <p className="settings-hint">Local provider, no API key required.</p>
+  }
+
+  const inputId = `api-key-${provider}`
+  const showStatus = selected
+  const connectionStatusLabel =
+    showStatus && connectionStatus === 'testing'
+      ? 'Testing'
+      : showStatus && connectionStatus === 'success'
+        ? 'Connected'
+        : showStatus && connectionStatus === 'error'
+          ? 'Failed'
+          : undefined
+
+  return (
+    <div className="api-key-setting">
+      <div className="readonly-input api-key-input-row">
+        <label htmlFor={inputId}>API Key</label>
+        <div className="api-key-control">
+          <input
+            id={inputId}
+            aria-label={`${providerLabel(provider)} API key`}
+            type="password"
+            value={selected ? draft : ''}
+            placeholder={configured ? 'Stored locally' : `Enter ${providerLabel(provider)} key`}
+            onFocus={onSelect}
+            onChange={(event) => {
+              if (!selected) onSelect()
+              onDraftChange(event.target.value)
+            }}
+          />
+          <button
+            className="settings-action primary"
+            onClick={() => onSave(provider, draft)}
+            disabled={!selected || !draft.trim() || status === 'saving'}
+          >
+            {selected && status === 'saving' ? 'Saving' : 'Save'}
+          </button>
+          <button
+            className="settings-action"
+            onClick={() => onTest(provider)}
+            disabled={selected && connectionStatus === 'testing'}
+          >
+            {selected && connectionStatus === 'testing' ? 'Testing' : 'Test'}
+          </button>
+        </div>
+      </div>
+      <div className="api-key-meta">
+        <span className={`key-status ${configured ? 'configured' : ''}`}>
+          {configured ? 'Configured' : 'Not configured'}
+        </span>
+        <span>Stored locally, outside normal settings.</span>
+      </div>
+      {showStatus && status === 'saved' ? (
+        <p className="settings-connection success" role="status">
+          Saved locally.
+        </p>
+      ) : null}
+      {showStatus && status === 'error' ? (
+        <p className="settings-error" role="alert">
+          {error || 'Could not update API key.'}
+        </p>
+      ) : null}
+      {connectionStatusLabel ? (
+        <p
+          className={`settings-connection ${connectionStatus}`}
+          role={connectionStatus === 'error' ? 'alert' : 'status'}
+        >
+          {connectionStatusLabel}
+          {connectionResult?.message ? `: ${connectionResult.message}` : ''}
+        </p>
+      ) : null}
+    </div>
+  )
+}
+
+function IntegrationTile({
+  provider,
+  title,
+  description,
+  status,
+  children,
+}: {
+  provider: string
+  title: string
+  description: string
+  status: string
+  children?: React.ReactNode
+}) {
+  return (
+    <div className="integration-tile">
+      <div className="integration-head">
+        <BrandLogo provider={provider} />
+        <div>
+          <strong>{title}</strong>
+          <span>{status}</span>
+        </div>
+      </div>
+      <p>{description}</p>
+      {children ? <div className="integration-control">{children}</div> : null}
+    </div>
+  )
+}
+
 function FieldGroup({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="field-group">
       <label>{label}</label>
       {children}
     </div>
+  )
+}
+
+function SettingsSelect<T extends string>({
+  label,
+  options,
+  value,
+  onChange,
+}: {
+  label: string
+  options: Array<{ id: T; label: string }>
+  value: T
+  onChange: (value: T) => void
+}) {
+  return (
+    <label className="readonly-input settings-select-row">
+      <span>{label}</span>
+      <select
+        aria-label={label}
+        value={value}
+        onChange={(event) => onChange(event.target.value as T)}
+      >
+        {options.map((option) => (
+          <option key={option.id} value={option.id}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+    </label>
   )
 }
 
@@ -1927,45 +2603,6 @@ function ToggleRow({
   )
 }
 
-function FloatingCapsule({
-  phase,
-  duration,
-  onStop,
-}: {
-  phase: MeetingPhase
-  duration: string
-  onStop: () => void | Promise<void>
-}) {
-  const recording = phase === 'recording'
-
-  return (
-    <div className={`floating-capsule ${recording ? 'jelly-capsule-active' : 'jelly-capsule ready'}`}>
-      <span className="pulse-dot" />
-      {recording ? (
-        <div className="waveform" aria-hidden="true">
-          <i />
-          <i />
-          <i />
-          <i />
-          <i />
-        </div>
-      ) : null}
-      <span>{recording ? duration : phase === 'ready' ? 'AI Notes Ready' : 'Idle'}</span>
-      <span className="capsule-spacer" />
-      {recording ? (
-        <>
-          <button className="capsule-btn" aria-label="Add marker">
-            +
-          </button>
-          <button className="capsule-btn" aria-label="Stop recording" onClick={onStop}>
-            <Square size={10} />
-          </button>
-        </>
-      ) : null}
-    </div>
-  )
-}
-
 function createListMeeting(id: string, title: string, phase: MeetingPhase): Meeting {
   return {
     ...createDemoMeeting(phase),
@@ -1975,7 +2612,6 @@ function createListMeeting(id: string, title: string, phase: MeetingPhase): Meet
 }
 
 function statusLabel(phase: MeetingPhase, compact: boolean): string {
-  if (phase === 'recording') return compact ? '12:48' : 'Recording 12:48'
   if (phase === 'ready') return 'Ready'
   if (phase === 'needs_review') return compact ? 'Review' : 'Needs review'
   if (phase === 'draft') return 'Draft'

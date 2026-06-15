@@ -28,4 +28,13 @@ describe('provider factory', () => {
 
     expect(provider.id).toBe('mock-ai-notes')
   })
+
+  it('uses the Doubao desktop provider when Doubao is selected for STT', () => {
+    const provider = createTranscriptionProvider(
+      { ...defaultAppSettings, transcriptionProvider: 'doubao', sttModel: 'bigmodel' },
+      createMemoryApiKeyRepository(),
+    )
+
+    expect(provider.id).toBe('doubao-desktop-transcription')
+  })
 })

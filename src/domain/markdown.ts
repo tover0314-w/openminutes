@@ -1,4 +1,4 @@
-import { type ActionItem, type Meeting, type TranscriptLine } from './meeting'
+import { type ActionItem, type AiNotes, type Meeting, type TranscriptLine } from './meeting'
 import { findTranscriptCitations, type TranscriptCitation } from './citations'
 
 export interface MeetingMarkdownOptions {
@@ -26,29 +26,39 @@ export function formatMeetingMarkdown(
     return lines.join('\n').trimEnd()
   }
 
+  if (meeting.aiNotes.document?.trim()) {
+    lines.push('## Review Brief', '', meeting.aiNotes.document.trim(), '')
+
+    if (options.includeTranscript) {
+      lines.push('## Original Transcript', '', ...formatTranscript(meeting.transcript), '')
+    }
+
+    return lines.join('\n').trimEnd()
+  }
+
   lines.push(
-    '## Summary',
+    '## Review Brief',
     '',
     meeting.aiNotes.summary,
     ...formatCitationBlock(findCitations(meeting, meeting.aiNotes.summary, includeCitations)),
+    '',
+    '## Next Steps',
+    '',
+    ...formatActionItems(meeting.aiNotes.actionItems, meeting, includeCitations),
     '',
     '## Decisions',
     '',
     ...formatList(meeting.aiNotes.decisions, meeting, includeCitations),
     '',
-    '## Action Items',
-    '',
-    ...formatActionItems(meeting.aiNotes.actionItems, meeting, includeCitations),
-    '',
-    '## Open Questions',
+    '## Risks / Follow-ups',
     '',
     ...formatList(meeting.aiNotes.openQuestions, meeting, includeCitations),
     '',
-    '## Key Points',
+    '## Important Context',
     '',
     ...formatList(meeting.aiNotes.keyPoints, meeting, includeCitations),
     '',
-    '## Follow-up Draft',
+    '## Suggested Follow-up',
     '',
     meeting.aiNotes.followUpDraft,
     ...formatCitationBlock(findCitations(meeting, meeting.aiNotes.followUpDraft, includeCitations)),
@@ -60,6 +70,53 @@ export function formatMeetingMarkdown(
   }
 
   return lines.join('\n').trimEnd()
+}
+
+export function formatAiNotesDocument(notes: AiNotes): string {
+  const lines = [
+    'Review Brief',
+    '',
+    notes.summary.trim() || 'No summary yet.',
+    '',
+    'Next Steps',
+    '',
+    ...formatActionItemsForDocument(notes.actionItems),
+    '',
+    'Decisions',
+    '',
+    ...formatStringListForDocument(notes.decisions),
+    '',
+    'Risks / Follow-ups',
+    '',
+    ...formatStringListForDocument(notes.openQuestions),
+    '',
+    'Important Context',
+    '',
+    ...formatStringListForDocument(notes.keyPoints),
+    '',
+    'Suggested Follow-up',
+    '',
+    notes.followUpDraft.trim() || 'No follow-up draft yet.',
+  ]
+
+  return lines.join('\n').trim()
+}
+
+function formatStringListForDocument(items: string[]): string[] {
+  const visibleItems = items.map((item) => item.trim()).filter(Boolean)
+  if (visibleItems.length === 0) return ['None yet.']
+  return visibleItems.map((item) => `- ${item}`)
+}
+
+function formatActionItemsForDocument(items: ActionItem[]): string[] {
+  const visibleItems = items.filter((item) => item.text.trim())
+  if (visibleItems.length === 0) return ['None yet.']
+
+  return visibleItems.map((item) => {
+    const owner = item.owner ? ` (${item.owner})` : ''
+    const due = item.due ? ` - due ${item.due}` : ''
+    return `- [ ] ${item.text}${owner}${due}`
+  })
 }
 
 function formatList(items: string[], meeting: Meeting, includeCitations: boolean): string[] {

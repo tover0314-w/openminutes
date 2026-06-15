@@ -1,6 +1,21 @@
 export type CaptureSource = 'mic-system' | 'microphone-only'
 export type MeetingPreference = 'focus-first' | 'split-view'
-export type AiProviderId = 'openai-compatible' | 'ollama'
+export type ApiProviderId =
+  | 'openai'
+  | 'openai-compatible'
+  | 'ollama'
+  | 'groq'
+  | 'openrouter'
+  | 'doubao'
+  | 'deepgram'
+  | 'assemblyai'
+export type AiProviderId = 'openai' | 'groq' | 'openrouter' | 'openai-compatible' | 'ollama'
+export type BatchTranscriptionProviderId = 'openai' | 'groq' | 'doubao' | 'openai-compatible'
+export type RealtimeTranscriptionProviderId =
+  | 'openai-realtime'
+  | 'doubao-realtime'
+  | 'deepgram'
+  | 'assemblyai'
 export type ProviderRunMode = 'provider' | 'local-demo'
 
 export interface AppSettings {
@@ -11,12 +26,17 @@ export interface AppSettings {
   hideTranscriptByDefault: boolean
   noPublicLinks: boolean
   aiProvider: AiProviderId
+  transcriptionProvider: BatchTranscriptionProviderId
+  realtimeTranscriptionProvider: RealtimeTranscriptionProviderId
   transcriptionMode: ProviderRunMode
   notesMode: ProviderRunMode
   aiBaseUrl: string
+  transcriptionBaseUrl: string
+  realtimeModel: string
   sttModel: string
   notesModel: string
   useKeychain: boolean
+  desktopCapsuleEnabled: boolean
   exportFolder: string
   includeTranscriptInExport: boolean
   slackWebhookLabel: string
@@ -37,13 +57,18 @@ export const defaultAppSettings: AppSettings = {
   saveRawAudio: false,
   hideTranscriptByDefault: true,
   noPublicLinks: true,
-  aiProvider: 'openai-compatible',
+  aiProvider: 'openrouter',
+  transcriptionProvider: 'doubao',
+  realtimeTranscriptionProvider: 'doubao-realtime',
   transcriptionMode: 'provider',
   notesMode: 'provider',
   aiBaseUrl: 'https://api.openai.com/v1',
-  sttModel: 'whisper-1',
-  notesModel: 'gpt-4.1-mini',
+  transcriptionBaseUrl: 'https://api.openai.com/v1',
+  realtimeModel: 'bigmodel',
+  sttModel: 'bigmodel',
+  notesModel: 'openai/gpt-4.1-mini',
   useKeychain: true,
+  desktopCapsuleEnabled: true,
   exportFolder: 'Documents/OpenMinutes',
   includeTranscriptInExport: false,
   slackWebhookLabel: 'Webhook placeholder',
@@ -96,6 +121,14 @@ export function normalizeAppSettings(value: unknown): AppSettings {
     ),
     noPublicLinks: booleanOrDefault(partial.noPublicLinks, defaultAppSettings.noPublicLinks),
     aiProvider: isAiProvider(partial.aiProvider) ? partial.aiProvider : defaultAppSettings.aiProvider,
+    transcriptionProvider: isBatchTranscriptionProvider(partial.transcriptionProvider)
+      ? partial.transcriptionProvider
+      : defaultAppSettings.transcriptionProvider,
+    realtimeTranscriptionProvider: isRealtimeTranscriptionProvider(
+      partial.realtimeTranscriptionProvider,
+    )
+      ? partial.realtimeTranscriptionProvider
+      : defaultAppSettings.realtimeTranscriptionProvider,
     transcriptionMode: isProviderRunMode(partial.transcriptionMode)
       ? partial.transcriptionMode
       : defaultAppSettings.transcriptionMode,
@@ -103,9 +136,18 @@ export function normalizeAppSettings(value: unknown): AppSettings {
       ? partial.notesMode
       : defaultAppSettings.notesMode,
     aiBaseUrl: stringOrDefault(partial.aiBaseUrl, defaultAppSettings.aiBaseUrl),
+    transcriptionBaseUrl: stringOrDefault(
+      partial.transcriptionBaseUrl,
+      defaultAppSettings.transcriptionBaseUrl,
+    ),
+    realtimeModel: stringOrDefault(partial.realtimeModel, defaultAppSettings.realtimeModel),
     sttModel: stringOrDefault(partial.sttModel, defaultAppSettings.sttModel),
     notesModel: stringOrDefault(partial.notesModel, defaultAppSettings.notesModel),
     useKeychain: booleanOrDefault(partial.useKeychain, defaultAppSettings.useKeychain),
+    desktopCapsuleEnabled: booleanOrDefault(
+      partial.desktopCapsuleEnabled,
+      defaultAppSettings.desktopCapsuleEnabled,
+    ),
     exportFolder: stringOrDefault(partial.exportFolder, defaultAppSettings.exportFolder),
     includeTranscriptInExport: booleanOrDefault(
       partial.includeTranscriptInExport,
@@ -133,7 +175,26 @@ function isMeetingPreference(value: unknown): value is MeetingPreference {
 }
 
 function isAiProvider(value: unknown): value is AiProviderId {
-  return value === 'openai-compatible' || value === 'ollama'
+  return (
+    value === 'openai' ||
+    value === 'groq' ||
+    value === 'openrouter' ||
+    value === 'openai-compatible' ||
+    value === 'ollama'
+  )
+}
+
+function isBatchTranscriptionProvider(value: unknown): value is BatchTranscriptionProviderId {
+  return value === 'openai' || value === 'groq' || value === 'doubao' || value === 'openai-compatible'
+}
+
+function isRealtimeTranscriptionProvider(value: unknown): value is RealtimeTranscriptionProviderId {
+  return (
+    value === 'openai-realtime' ||
+    value === 'doubao-realtime' ||
+    value === 'deepgram' ||
+    value === 'assemblyai'
+  )
 }
 
 function isProviderRunMode(value: unknown): value is ProviderRunMode {

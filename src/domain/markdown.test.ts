@@ -7,7 +7,8 @@ describe('formatMeetingMarkdown', () => {
     const markdown = formatMeetingMarkdown(createDemoMeeting('ready'))
 
     expect(markdown).toContain('# Product sync with Alex')
-    expect(markdown).toContain('## Summary')
+    expect(markdown).toContain('## Review Brief')
+    expect(markdown).toContain('## Next Steps')
     expect(markdown).toContain('- [ ] Implement the token-compatible desktop meeting shell. (Tov)')
     expect(markdown).toContain(
       '_Sources: 10:06 Alex - During recording, show transcript. AI Notes come after stop.',

@@ -12,12 +12,14 @@ const captureMocks = vi.hoisted(() => {
     retained: true,
   }))
   const status = vi.fn(async () => ({ recording: false }))
+  const deleteFile = vi.fn(async () => ({ path: '/tmp/native-recording.wav', deleted: true }))
 
   return {
     start,
     stop,
     status,
-    create: vi.fn(async () => ({ start, stop, status })),
+    deleteFile,
+    create: vi.fn(async () => ({ start, stop, status, deleteFile })),
   }
 })
 
@@ -31,20 +33,30 @@ vi.mock('./desktop/tauri', () => ({
 }))
 
 describe('App native microphone capture', () => {
-  it('passes the Save raw audio setting into native stop capture', async () => {
+  it('runs the desktop meeting flow from native capture through AI Notes and raw audio cleanup', async () => {
     const user = userEvent.setup()
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.defineProperty(globalThis.navigator, 'clipboard', {
+      value: { writeText },
+      configurable: true,
+    })
+
     render(<App />)
 
     await user.click(screen.getByRole('button', { name: /settings/i }))
-    await user.click(screen.getByRole('button', { name: /^audio$/i }))
     await user.click(screen.getByRole('switch', { name: /save raw audio/i }))
 
-    await user.click(screen.getByRole('button', { name: /^ai$/i }))
+    await user.click(screen.getByRole('button', { name: /transcription/i }))
     await user.click(screen.getByRole('button', { name: /local demo stt/i }))
+    await user.click(screen.getByRole('button', { name: /ai notes/i }))
+    await user.click(screen.getByRole('button', { name: /local demo notes/i }))
 
     await user.click(screen.getByRole('button', { name: /start meeting/i }))
     await waitFor(() => {
-      expect(captureMocks.start).toHaveBeenCalledWith('product-sync-alex')
+      expect(captureMocks.start).toHaveBeenCalledWith(expect.stringMatching(/^meeting-/), {
+        realtimeModel: 'bigmodel',
+        realtimeProvider: 'doubao-realtime',
+      })
     })
 
     const meeting = screen.getByRole('region', { name: /meeting/i })
@@ -53,8 +65,25 @@ describe('App native microphone capture', () => {
     await waitFor(() => {
       expect(captureMocks.stop).toHaveBeenCalledWith({ keepFile: true })
     })
+    const transcriptPane = await screen.findByRole('complementary', { name: /original transcript/i })
     expect(
-      await screen.findByDisplayValue(/local demo transcript generated for native-recording/i),
+      within(transcriptPane).getByText(/local demo transcript generated for native-recording/i),
     ).toBeInTheDocument()
+    expect(await screen.findByText(/local review confirms that new meeting/i)).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /copy markdown/i }))
+    expect(writeText).toHaveBeenCalledWith(
+      expect.stringContaining('This local review confirms that New Meeting'),
+    )
+
+    expect(await screen.findByText(/^raw audio$/i)).toBeInTheDocument()
+    expect(screen.getAllByText(/native-recording.wav/i).length).toBeGreaterThan(0)
+
+    await user.click(screen.getByRole('button', { name: /delete raw audio/i }))
+
+    await waitFor(() => {
+      expect(captureMocks.deleteFile).toHaveBeenCalledWith('/tmp/native-recording.wav')
+    })
+    expect(screen.queryByText(/^raw audio$/i)).not.toBeInTheDocument()
   })
 })

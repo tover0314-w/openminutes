@@ -41,6 +41,14 @@ export interface AiNotes {
   openQuestions: string[]
   keyPoints: string[]
   followUpDraft: string
+  document?: string
+}
+
+export interface RawAudioRecording {
+  path: string
+  fileName: string
+  durationMillis: number
+  retainedAt: string
 }
 
 export interface Meeting {
@@ -55,6 +63,7 @@ export interface Meeting {
   markers: Marker[]
   transcript: TranscriptLine[]
   aiNotes?: AiNotes
+  rawAudio?: RawAudioRecording
 }
 
 export interface MeetingViewModel {
@@ -101,9 +110,6 @@ export function getMeetingViewModel(meeting: Meeting): MeetingViewModel {
 }
 
 export function buildAiNotesContext(meeting: Meeting): string {
-  const markerContext = meeting.markers
-    .map((marker) => `[${marker.kind} ${marker.time}] ${marker.text}`)
-    .join('\n')
   const transcriptContext = meeting.transcript
     .map((line) => `${line.time} ${line.speaker}: ${line.text}`)
     .join('\n')
@@ -116,9 +122,6 @@ export function buildAiNotesContext(meeting: Meeting): string {
     'Manual notes:',
     meeting.manualNotes.trim() || '(none)',
     '',
-    'Markers:',
-    markerContext || '(none)',
-    '',
     'Transcript:',
     transcriptContext || '(none)',
   ].join('\n')
@@ -127,7 +130,7 @@ export function buildAiNotesContext(meeting: Meeting): string {
 export function createDemoMeeting(phase: MeetingPhase = 'recording'): Meeting {
   const aiNotes: AiNotes = {
     summary:
-      'OpenMinutes should ship as a desktop-first meeting product that uses OpenTypeless design tokens while clearly separating capture, transcript, and AI Notes.',
+      'The meeting produced a clear product direction: OpenMinutes should remain a desktop-first meeting product first, while keeping a future merge path back into OpenTypeless. The strongest requirement is interaction clarity: Focus is for capture and live transcript, while Review is the AI-generated result supported by original transcript source. The main unresolved product question is whether AI Notes should generate automatically after stop or wait for an explicit user action.',
     decisions: [
       'Keep Settings as a two-column desktop preference view.',
       'Use one Meeting sidebar item with Focus and Review modes.',
@@ -147,11 +150,11 @@ export function createDemoMeeting(phase: MeetingPhase = 'recording'): Meeting {
     ],
     openQuestions: ['Should AI Notes generate automatically after stop or wait for a click?'],
     keyPoints: [
-      'Manual notes and markers should influence AI Notes more strongly than raw transcript text.',
-      'Original transcript remains visible as source material in Review.',
+      'Manual notes are the strongest human signal and should shape the Review result, not appear as a separate form-like output.',
+      'The original transcript should stay visible as source material, but the left pane should read like the final AI review.',
     ],
     followUpDraft:
-      'Alex, we agreed that Review should be the AI Notes workspace, with the original transcript available on the right as source context.',
+      'Alex, my read is that we should keep OpenMinutes desktop-first for now, use Focus for live capture, and make Review the AI-generated meeting result with the transcript on the right as source context. The remaining call is whether AI Notes should auto-generate after stop or wait for the user to click Generate.',
   }
 
   return {
@@ -164,26 +167,7 @@ export function createDemoMeeting(phase: MeetingPhase = 'recording'): Meeting {
     phase,
     manualNotes:
       'Goal: decide whether meeting mode should ship as a separate product first.\n\n[Decision] Ship macOS-first.\n[Action] Prototype desktop token-compatible UI.\n[Question] Should transcript stay as the right-side source in Review?\n\nNotes:\n- design tokens should match OpenTypeless\n- Review content is AI Notes\n- right side is original transcript/source',
-    markers: [
-      {
-        id: 'm1',
-        kind: 'Decision',
-        time: '04:18',
-        text: 'Ship macOS-first and keep a future OpenTypeless merge path.',
-      },
-      {
-        id: 'm2',
-        kind: 'Action',
-        time: '09:12',
-        text: 'Prototype Focus and Review modes.',
-      },
-      {
-        id: 'm3',
-        kind: 'Question',
-        time: '12:04',
-        text: 'Decide whether AI Notes auto-generate after stop.',
-      },
-    ],
+    markers: [],
     transcript: [
       {
         id: 't1',

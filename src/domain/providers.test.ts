@@ -15,9 +15,11 @@ describe('provider abstractions', () => {
 
     expect(nextMeeting.phase).toBe('ready')
     expect(nextMeeting.aiNotes?.decisions).toContain(
-      'Ship macOS-first and keep a future OpenTypeless merge path.',
+      'Use the user-written notes as the strongest emphasis source.',
     )
-    expect(nextMeeting.aiNotes?.actionItems[0]?.text).toBe('Prototype Focus and Review modes.')
+    expect(nextMeeting.aiNotes?.actionItems[0]?.text).toBe(
+      'Replace demo transcription with provider STT before sharing externally.',
+    )
   })
 
   it('transcribes through a provider boundary', async () => {

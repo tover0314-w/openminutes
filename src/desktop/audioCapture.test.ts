@@ -26,6 +26,9 @@ describe('TauriAudioCaptureSession', () => {
       if (command === 'audio_capture_status') {
         return { recording: false }
       }
+      if (command === 'delete_audio_capture_file') {
+        return { path: '/tmp/recording.wav', deleted: true }
+      }
       return undefined
     }) as TauriInvoke
     const session = new TauriAudioCaptureSession(invoke)
@@ -36,12 +39,19 @@ describe('TauriAudioCaptureSession', () => {
     })
     const result = await session.stop()
     await expect(session.status()).resolves.toEqual({ recording: false })
+    await expect(session.deleteFile('/tmp/recording.wav')).resolves.toEqual({
+      path: '/tmp/recording.wav',
+      deleted: true,
+    })
 
     expect(invoke).toHaveBeenCalledWith('start_audio_capture', {
       meetingId: 'product-sync-alex',
     })
     expect(invoke).toHaveBeenCalledWith('stop_audio_capture', { keepFile: false })
     expect(invoke).toHaveBeenCalledWith('audio_capture_status')
+    expect(invoke).toHaveBeenCalledWith('delete_audio_capture_file', {
+      path: '/tmp/recording.wav',
+    })
     expect(result.retained).toBe(false)
     expect(result.path).toBe('/tmp/recording.wav')
     expect(result.durationMillis).toBe(1250)

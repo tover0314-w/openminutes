@@ -417,7 +417,7 @@ Meeting has one app-level entry in the sidebar. Focus and Review are internal st
 | Right pane | Live Transcript | Original Transcript / Source |
 | Transcript | Realtime raw transcript | Finalized original transcript |
 | AI summary | Not shown | Shown after generation |
-| Primary actions | Add marker, type note, stop recording | Edit AI Notes, regenerate, copy Markdown, export |
+| Primary actions | Add marker, type note, stop recording | Review AI Notes, regenerate, copy Markdown, export |
 | Capsule state | Recording timer and controls | Ready/idle state |
 | User mental model | "Capture the meeting without distraction" | "Turn the meeting into decisions and follow-up" |
 
@@ -440,7 +440,7 @@ Review mode rules:
 5. Review must clearly separate AI Notes from raw transcript.
 6. Transcript belongs in the right source panel, not the main Review content.
 7. Export actions live in Review, not Focus.
-8. Review is where the user accepts, edits, copies, regenerates, or exports meeting output.
+8. Review is where the user accepts, copies, regenerates, or exports meeting output.
 
 State transition:
 
@@ -476,7 +476,7 @@ Default behavior:
 
 ### 8.4.2 Review Workspace vs AI Notes
 
-Review is the post-meeting mode for editing and approving AI Notes. In normal use, the content the user reviews is the AI Notes result.
+Review is the post-meeting mode for reading and approving AI Notes. In normal use, the content the user reviews is the AI Notes result.
 
 Review workspace content:
 
@@ -499,7 +499,6 @@ Review workspace content:
 
 4. Review actions
    - Generate/regenerate AI Notes
-   - Edit AI Notes
    - Open/collapse transcript
    - Copy Markdown
    - Export to Notion or Slack
@@ -534,7 +533,7 @@ AI Notes content:
    - Important discussion points that are not decisions or tasks.
 
 6. Follow-up draft
-   - A ready-to-edit message for email, Slack, or Notion.
+   - A ready-to-copy message for email, Slack, or Notion.
 
 7. Optional template sections
    - Customer pain points for customer calls.
@@ -546,7 +545,7 @@ Rules:
 
 1. Review can exist before AI Notes are generated.
 2. AI Notes cannot exist before transcript finalization.
-3. AI Notes should be editable or regeneratable, but the raw transcript and manual notes remain preserved.
+3. AI Notes should be regeneratable in the MVP; future editing should use document-like inline editing, not form fields.
 4. Export defaults to AI Notes, with transcript included only when the user explicitly selects it.
 5. Manual notes and markers should influence AI Notes generation more strongly than raw transcript text.
 6. The right panel in Review is the original transcript/source, not AI Notes.
@@ -764,24 +763,30 @@ MVP should support:
 
 ### Current Provider Boundary
 
-The current implementation includes provider interfaces before real provider calls:
+The current implementation has separate provider boundaries for live transcription, file transcription, and AI Notes:
 
 1. `TranscriptionProvider`
    - Input: meeting id, local audio URI, optional start timestamp.
    - Output: timestamped transcript lines.
-   - Current implementation: mock provider for local tests plus an OpenAI-compatible audio transcription adapter for imported audio files.
+   - Current implementation: mock provider for local tests plus OpenAI, Groq, and OpenAI-compatible audio transcription adapters for imported or captured audio files.
 
 2. `AiNotesProvider`
    - Input: meeting object plus generation context.
    - Output: structured AI Notes.
-   - Current implementation: mock provider for local tests plus an OpenAI-compatible chat completions adapter.
+   - Current implementation: mock provider for local tests plus OpenAI, Groq, OpenRouter, OpenAI-compatible, and Ollama-compatible chat completions adapters.
+
+3. Realtime STT provider settings
+   - Candidate providers: OpenAI Realtime transcription, Deepgram, and AssemblyAI.
+   - Current implementation: settings, key storage, and provider connection testing.
+   - Not completed yet: streaming microphone/system audio chunks into a realtime WebSocket STT session and emitting transcript events during Focus.
 
 Rules:
 
 1. UI code should not call provider-specific APIs directly.
-2. Real OpenAI/Groq/Ollama adapters should implement these provider interfaces.
+2. Real OpenAI/Groq/Ollama adapters should implement the provider interfaces.
 3. Provider credentials must live in settings/keychain storage, not in meeting records.
 4. Mock providers must remain available for offline tests and demos.
+5. Realtime STT and file STT must remain separate choices because the cheapest file transcription provider is not necessarily a good live transcription provider.
 
 ## 11. Local Data Model
 
@@ -1222,14 +1227,14 @@ Still intentionally not completed:
 2. Real system audio capture.
 3. Real STT upload/transcription flow.
 4. Streaming transcript updates from audio capture.
-5. Editing generated AI Notes.
+5. Document-style inline editing for generated AI Notes.
 6. Native save-location picker.
 7. Slack/Notion export adapters.
 8. Normalized SQLite tables for transcript lines, markers, and AI output.
 
 Next recommended slice:
 
-1. Add editable AI Notes fields in Review.
+1. Add a document-like Review reading mode for AI Notes.
 2. Add a first STT provider adapter behind `TranscriptionProvider`.
 3. Add audio-file import for testing STT before native capture.
 4. Add transcript finalization states and retry handling.
@@ -1520,14 +1525,14 @@ Completed in the fifteenth push:
    - Summary and follow-up draft render as paragraphs.
    - Decisions, open questions, and key points render as document lists.
    - Action items render as readable task rows with owner badges.
-2. Moved AI Notes text fields behind an explicit `Edit Review` mode.
-3. Kept `Done Editing` as the exit path so editing stays available without making Review look like a form.
+2. Moved AI Notes text fields out of the default reading path.
+3. Kept editing secondary at this point; this was later superseded by the stricter text-only rule in Slice 20.
 4. Kept source citation chips visible in the default reading view.
 5. Changed `User Notes` into a full, quote-style source block:
    - User-recorded notes are shown without clipping.
    - User notes are visually stronger than raw transcript text.
    - Markers remain compact emphasized signals below the notes.
-6. Added UI test coverage proving default Review does not expose the AI summary text field until editing is requested.
+6. Added UI test coverage proving default Review does not expose the AI summary text field.
 
 Product rule clarified:
 
@@ -1637,12 +1642,206 @@ Local-first does not mean keeping raw audio by default. The app should hand audi
 
 Still intentionally not completed:
 
-1. User-visible retained recording file location.
-2. Manual delete retained raw audio from the app UI.
-3. Age-based cleanup of older retained recordings.
+1. Age-based cleanup of older retained recordings.
+2. Reveal retained recordings in Finder.
+3. Live streaming transcript updates while recording.
+4. System audio capture with ScreenCaptureKit.
+5. Mic + system audio mixing.
+
+### 15.24 Implementation Slice 20: Review Text Mode and Retained Audio Controls
+
+Completed in the twentieth push:
+
+1. Removed form-style AI Notes editing from the main Review pane.
+2. Kept Review AI Notes as plain document text:
+   - Summary and follow-up draft are paragraphs.
+   - Decisions, questions, and key points are plain document lists.
+   - Action items are readable task rows.
+3. Changed the user source block into `User Highlights`:
+   - Manual notes are visually emphasized as high-priority user context.
+   - Markers remain compact highlighted source signals.
+   - The source block is shown even before AI Notes are generated.
+4. Added retained raw audio metadata to meeting state when `Save raw audio` is enabled.
+5. Showed retained raw audio in Review with:
+   - File name.
+   - Duration.
+   - Full saved path with overflow handling.
+   - `Delete Raw Audio` action.
+6. Added a Tauri delete command that only deletes retained WAV files inside the app recordings directory.
+7. Added tests proving:
+   - Review does not expose AI Notes textboxes or an `Edit Review` action.
+   - Retained raw audio is visible in Review after native stop capture.
+   - Deleting retained raw audio calls the desktop capture boundary and clears the UI.
+   - The native delete helper rejects files outside the recordings directory.
+
+Product rule clarified:
+
+Review's main pane should feel like a finished meeting note, not a generated form. The only editable Review surface in the MVP is the original transcript source panel, because correcting source text improves future regeneration and trust. AI Notes editing can return later as document-style inline editing if it becomes important.
+
+Still intentionally not completed:
+
+1. Age-based cleanup of older retained recordings.
+2. Reveal retained recordings in Finder.
+3. Per-paragraph document-style AI Notes editing.
 4. Live streaming transcript updates while recording.
 5. System audio capture with ScreenCaptureKit.
 6. Mic + system audio mixing.
+
+### 15.25 Implementation Slice 21: Cloud API Service Selection and Connection Tests
+
+Completed in the twenty-first push:
+
+1. Split cloud service configuration into three product decisions:
+   - Realtime STT provider.
+   - File/batch transcription provider.
+   - AI Notes provider.
+2. Added realtime STT provider settings for:
+   - OpenAI Realtime transcription (`gpt-realtime-whisper` by default).
+   - Deepgram (`nova-3` by default).
+   - AssemblyAI (`universal-streaming` by default).
+3. Added file transcription provider settings for:
+   - OpenAI (`gpt-4o-mini-transcribe` by default).
+   - Groq (`whisper-large-v3-turbo` by default).
+   - Custom OpenAI-compatible endpoint.
+4. Added AI Notes provider settings for:
+   - OpenAI.
+   - Groq.
+   - OpenRouter.
+   - Custom OpenAI-compatible endpoint.
+   - Ollama-compatible local endpoint.
+5. Generalized API key storage so keys are stored per provider:
+   - `openai`
+   - `groq`
+   - `openrouter`
+   - `deepgram`
+   - `assemblyai`
+   - `openai-compatible`
+6. Added a Tauri `test_provider_connection` command that checks provider reachability from the desktop shell:
+   - OpenAI: `GET /v1/models` with bearer auth.
+   - Groq: `GET /openai/v1/models` with bearer auth.
+   - OpenRouter: `GET /api/v1/models` with bearer auth.
+   - Deepgram: `GET /v1/models` with `Authorization: Token`.
+   - AssemblyAI: `GET /v2/transcript?limit=1` with raw Authorization key.
+   - OpenAI-compatible: `GET {baseUrl}/models` with bearer auth.
+   - Ollama: `GET {baseUrl}/models` without requiring a key.
+7. Added Settings > AI key provider selection and `Test Key` feedback.
+8. Added tests proving:
+   - Provider factories still use local demo mode without keys.
+   - OpenAI-backed AI Notes and file transcription now load the OpenAI key slot.
+   - Groq/OpenRouter AI Notes generation uses their OpenAI-compatible chat-completions endpoints.
+   - A provider-backed app smoke test runs audio import, STT, AI Notes generation, and Review rendering with mocked provider HTTP responses.
+   - Tauri provider connection tests are invoked with the selected provider and optional base URL.
+   - Rust provider connection plans map OpenAI Realtime to the OpenAI key slot.
+
+Product rule clarified:
+
+Do not treat Groq Whisper as the primary realtime transcription provider. It remains a very attractive low-cost file/final transcription candidate, but realtime meeting captions require a provider with a true streaming session path. OpenAI Realtime, Deepgram, and AssemblyAI are the current realtime candidates.
+
+Still intentionally not completed:
+
+1. Streaming microphone/system audio chunks into OpenAI Realtime, Deepgram, or AssemblyAI.
+2. Frontend event listeners for provider partial/final transcript events.
+3. Provider-specific realtime reconnection and backoff.
+4. A real benchmark screen that measures latency, word error quality, and per-hour cost from the same test clip.
+5. Provider-specific audio format negotiation in Rust.
+
+### 15.26 Implementation Slice 22: Doubao Realtime ASR Integration Smoke
+
+Completed in the twenty-second push:
+
+1. Added Doubao as a provider API key slot.
+2. Added Doubao as a realtime STT provider option with `bigmodel` as the default model.
+3. Added a Tauri-side Doubao realtime WebSocket module for:
+   - New-console `X-Api-Key` authentication.
+   - `X-Api-Resource-Id` selection.
+   - Binary protocol frame construction.
+   - Gzip JSON request payloads.
+   - Gzip audio chunk payloads.
+   - Server response parsing.
+   - Transcript text extraction from nested JSON responses.
+4. Added a desktop provider connection path that tests Doubao with a WebSocket handshake rather than a fake HTTP models endpoint.
+5. Added a local smoke runner:
+   - `cargo run --manifest-path src-tauri/Cargo.toml --bin doubao_realtime_smoke -- /path/to/16k-mono-int16.wav`
+6. Added tests proving:
+   - Final audio frames use the final-packet flag without an extra sequence field for the `nostream` path.
+   - Gzipped JSON server responses can be parsed.
+   - Nested transcript text can be extracted without duplicates.
+7. Ran the smoke runner against a generated 16 kHz mono PCM WAV.
+8. Updated the default local smoke resource id to `volc.seedasr.sauc.duration`, which is the enabled resource for this workspace.
+
+Real-provider test result:
+
+The local integration now reaches Doubao realtime ASR and returns a clean transcript with:
+
+1. Endpoint: `wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_nostream`
+2. Resource id: `volc.seedasr.sauc.duration`
+3. Audio: 16 kHz mono 16-bit PCM WAV
+4. Result text: `Open minutes test meeting. Alice will prepare the launch checklist. Bob will review pricing by Friday.`
+
+The key still does not have access to `volc.bigasr.sauc.duration`, so the app should keep the selected resource explicit instead of assuming all Doubao realtime SKUs are enabled.
+
+Product rule clarified:
+
+Doubao is a valid realtime STT candidate, especially for low-cost Chinese/English realtime transcription, but the app must treat vendor entitlement as a first-class setup state. A key can be syntactically valid while only some realtime ASR resource ids are enabled.
+
+Still intentionally not completed:
+
+1. Live transcript event streaming into Focus.
+2. Automatic fallback from Doubao realtime to another paid realtime provider.
+3. UI copy that explains vendor resource entitlement failures in plain language.
+4. Runtime selection between old-console `X-Api-App-Key`/`X-Api-Access-Key` auth and new-console `X-Api-Key` auth.
+
+### 15.27 Implementation Slice 23: Doubao to AI Notes Full Service Flow
+
+Completed in the twenty-third push:
+
+1. Added Doubao as a file/batch STT provider option in Settings > AI.
+2. Added a Tauri command for app-level Doubao transcription:
+   - Command: `transcribe_audio_with_doubao`
+   - Input: meeting id, file name, audio bytes, optional model name.
+   - Output: standard transcript lines compatible with Review.
+3. Added a desktop `DoubaoDesktopTranscriptionProvider` behind the existing `TranscriptionProvider` boundary.
+4. Updated `createTranscriptionProvider` so selecting Doubao STT uses the Doubao desktop provider instead of the OpenAI-compatible upload provider.
+5. Kept Doubao API keys in the same OS keychain-backed provider key slot:
+   - Provider id: `doubao`
+6. Added tests proving:
+   - Doubao is accepted by settings normalization as a file/batch STT provider.
+   - Provider factory returns the Doubao desktop transcription provider when Doubao STT is selected.
+   - The Doubao desktop provider sends audio bytes, meeting id, file name, and model name to the Tauri command.
+   - Missing Doubao key is treated as a provider configuration error.
+7. Hardened AI Notes parsing after a real OpenRouter run returned common alternate action item fields:
+   - Accept `task`/`action`/`title` as action text.
+   - Accept `responsible`/`assignee` as owner.
+   - Accept `deadline`/`dueDate` as due date.
+8. Ran a real full service flow:
+   - 16 kHz mono PCM WAV.
+   - Doubao realtime ASR transcript.
+   - OpenRouter `openai/gpt-4o-mini` AI Notes generation.
+9. Fixed the Tauri desktop CSP so renderer-side provider calls are allowed:
+   - OpenRouter/OpenAI/Groq/custom HTTPS providers are no longer blocked by `connect-src 'self'`.
+10. Set Cargo `default-run = "openminutes"` so `tauri dev` still starts the app after adding the Doubao smoke binary.
+
+Real full-flow test result:
+
+1. Transcript:
+   - `Open minutes test meeting. Alice will prepare the launch checklist. Bob will review pricing by Friday.`
+2. AI Notes summary:
+   - `Discussion on the OpenMinutes provider case with focus on launch checklist and pricing review.`
+3. Action items:
+   - Alice: prepare the launch checklist.
+   - Bob: review pricing by Friday.
+
+Product rule clarified:
+
+The complete cloud-provider flow has two separate external dependencies: STT and AI Notes. The app should validate and report them separately, because Doubao ASR can succeed while OpenRouter schema compliance can still vary by model.
+
+Still intentionally not completed:
+
+1. End-to-end GUI automation inside the packaged Tauri app with real provider keys in OS keychain.
+2. Realtime partial transcript streaming into Focus during active recording.
+3. Audio resampling/transcoding for non-WAV imports before sending to Doubao.
+4. User-facing resource-id selector for Doubao SKUs.
+5. Investigate why the bare debug binary process can run with zero visible windows in this local Codex desktop session.
 
 ## 16. Open Questions
 

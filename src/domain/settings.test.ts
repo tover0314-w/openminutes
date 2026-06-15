@@ -34,4 +34,24 @@ describe('normalizeAppSettings', () => {
     expect(settings.transcriptionMode).toBe('local-demo')
     expect(settings.notesMode).toBe('local-demo')
   })
+
+  it('keeps cloud provider selections for transcription and AI Notes', () => {
+    const settings = normalizeAppSettings({
+      aiProvider: 'openrouter',
+      transcriptionProvider: 'doubao',
+      realtimeTranscriptionProvider: 'doubao-realtime',
+    })
+
+    expect(settings.aiProvider).toBe('openrouter')
+    expect(settings.transcriptionProvider).toBe('doubao')
+    expect(settings.realtimeTranscriptionProvider).toBe('doubao-realtime')
+  })
+
+  it('does not allow realtime-only providers as AI Notes providers', () => {
+    const settings = normalizeAppSettings({
+      aiProvider: 'doubao',
+    })
+
+    expect(settings.aiProvider).toBe(defaultAppSettings.aiProvider)
+  })
 })

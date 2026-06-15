@@ -1,4 +1,5 @@
 import { type ApiKeyRepository } from './apiKey'
+import { DoubaoDesktopTranscriptionProvider } from '../desktop/doubaoTranscription'
 import {
   MissingApiKeyError,
   OpenAICompatibleAiNotesProvider,
@@ -26,6 +27,9 @@ export function createTranscriptionProvider(
   apiKeys: ApiKeyRepository,
 ): TranscriptionProvider {
   if (settings.transcriptionMode === 'local-demo') return new MockTranscriptionProvider()
+  if (settings.transcriptionProvider === 'doubao') {
+    return new DoubaoDesktopTranscriptionProvider(settings, apiKeys)
+  }
 
   return new OpenAICompatibleTranscriptionProvider(settings, apiKeys)
 }

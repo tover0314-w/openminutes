@@ -1,3 +1,4 @@
+use crate::doubao_realtime;
 use cpal::{
     traits::{DeviceTrait, HostTrait, StreamTrait},
     SampleFormat, Stream,
@@ -12,12 +13,24 @@ use std::{
     thread,
     time::{Instant, SystemTime, UNIX_EPOCH},
 };
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
+use tokio::sync::mpsc as tokio_mpsc;
 
 const CAPTURE_DIR_NAME: &str = "Recordings";
 const CAPTURE_READ_LIMIT_BYTES: u64 = 100 * 1024 * 1024;
+const REALTIME_TRANSCRIPT_EVENT: &str = "openminutes:realtime-transcript";
+const REALTIME_TRANSCRIPT_ERROR_EVENT: &str = "openminutes:realtime-transcript-error";
 
 type SharedWavWriter = Arc<Mutex<Option<WavWriter<BufWriter<File>>>>>;
+type SharedRealtimeSender = Arc<Mutex<Option<tokio_mpsc::UnboundedSender<Vec<i16>>>>>;
+
+#[derive(Debug, Clone)]
+pub struct RealtimeTranscriptionConfig {
+    pub api_key: String,
+    pub endpoint: String,
+    pub resource_id: String,
+    pub model_name: String,
+}
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -39,6 +52,13 @@ pub struct CapturedAudioFile {
     retained: bool,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeletedAudioCaptureFile {
+    path: String,
+    deleted: bool,
+}
+
 pub struct AudioCaptureManager {
     sender: mpsc::Sender<CaptureCommand>,
 }
@@ -49,13 +69,16 @@ struct ActiveCapture {
     started_at_unix_seconds: u64,
     started_at: Instant,
     writer: SharedWavWriter,
+    realtime_sender: SharedRealtimeSender,
     stream: Stream,
 }
 
 enum CaptureCommand {
     Start {
+        app: AppHandle,
         capture_dir: PathBuf,
         meeting_id: String,
+        realtime_config: Option<RealtimeTranscriptionConfig>,
         response: mpsc::Sender<Result<AudioCaptureStatus, String>>,
     },
     Stop {
@@ -77,11 +100,19 @@ impl Default for AudioCaptureManager {
 }
 
 impl AudioCaptureManager {
-    pub fn start(&self, app: &AppHandle, meeting_id: &str) -> Result<AudioCaptureStatus, String> {
+    pub fn start(
+        &self,
+        app: &AppHandle,
+        meeting_id: &str,
+        realtime_config: Option<RealtimeTranscriptionConfig>,
+    ) -> Result<AudioCaptureStatus, String> {
         let capture_dir = capture_dir(app)?;
+        let app = app.clone();
         send_capture_command(&self.sender, |response| CaptureCommand::Start {
+            app,
             capture_dir,
             meeting_id: meeting_id.to_string(),
+            realtime_config,
             response,
         })
     }
@@ -96,6 +127,15 @@ impl AudioCaptureManager {
     pub fn status(&self) -> Result<AudioCaptureStatus, String> {
         send_capture_command(&self.sender, |response| CaptureCommand::Status { response })
     }
+
+    pub fn delete_retained_file(
+        &self,
+        app: &AppHandle,
+        path: &str,
+    ) -> Result<DeletedAudioCaptureFile, String> {
+        let capture_dir = capture_dir(app)?;
+        delete_retained_file_at(&capture_dir, Path::new(path))
+    }
 }
 
 fn run_capture_actor(receiver: mpsc::Receiver<CaptureCommand>) {
@@ -104,11 +144,19 @@ fn run_capture_actor(receiver: mpsc::Receiver<CaptureCommand>) {
     for command in receiver {
         match command {
             CaptureCommand::Start {
+                app,
                 capture_dir,
                 meeting_id,
+                realtime_config,
                 response,
             } => {
-                let _ = response.send(start_capture(&mut active, capture_dir, &meeting_id));
+                let _ = response.send(start_capture(
+                    &mut active,
+                    app,
+                    capture_dir,
+                    &meeting_id,
+                    realtime_config,
+                ));
             }
             CaptureCommand::Stop {
                 keep_file,
@@ -138,8 +186,10 @@ fn send_capture_command<T>(
 
 fn start_capture(
     active: &mut Option<ActiveCapture>,
+    app: AppHandle,
     capture_dir: PathBuf,
     meeting_id: &str,
+    realtime_config: Option<RealtimeTranscriptionConfig>,
 ) -> Result<AudioCaptureStatus, String> {
     if active.is_some() {
         return Err("A microphone recording is already active.".to_string());
@@ -160,24 +210,32 @@ fn start_capture(
     let output_path = capture_file_path(&capture_dir, meeting_id);
     let writer = create_wav_writer(&output_path, config.channels, config.sample_rate.0)?;
     let writer_for_stream = Arc::clone(&writer);
+    let realtime_sender = start_realtime_transcription(
+        app,
+        meeting_id.to_string(),
+        realtime_config,
+        config.sample_rate.0,
+        config.channels,
+    );
+    let realtime_for_stream = Arc::clone(&realtime_sender);
     let error_callback = |error| eprintln!("OpenMinutes microphone capture stream error: {error}");
 
     let stream = match sample_format {
         SampleFormat::F32 => device.build_input_stream(
             &config,
-            move |data: &[f32], _| write_f32_samples(data, &writer_for_stream),
+            move |data: &[f32], _| write_f32_samples(data, &writer_for_stream, &realtime_for_stream),
             error_callback,
             None,
         ),
         SampleFormat::I16 => device.build_input_stream(
             &config,
-            move |data: &[i16], _| write_i16_samples(data, &writer_for_stream),
+            move |data: &[i16], _| write_i16_samples(data, &writer_for_stream, &realtime_for_stream),
             error_callback,
             None,
         ),
         SampleFormat::U16 => device.build_input_stream(
             &config,
-            move |data: &[u16], _| write_u16_samples(data, &writer_for_stream),
+            move |data: &[u16], _| write_u16_samples(data, &writer_for_stream, &realtime_for_stream),
             error_callback,
             None,
         ),
@@ -200,6 +258,7 @@ fn start_capture(
         started_at_unix_seconds,
         started_at: Instant::now(),
         writer,
+        realtime_sender,
         stream,
     });
 
@@ -216,6 +275,7 @@ fn stop_capture(
     let duration_millis = active.started_at.elapsed().as_millis();
     let output_path = active.output_path.clone();
 
+    close_realtime_sender(&active.realtime_sender);
     drop(active.stream);
     finalize_wav_writer(&active.writer)?;
 
@@ -255,6 +315,37 @@ fn read_captured_audio_file(
         bytes,
         duration_millis,
         retained: keep_file,
+    })
+}
+
+fn delete_retained_file_at(
+    capture_dir: &Path,
+    path: &Path,
+) -> Result<DeletedAudioCaptureFile, String> {
+    let canonical_capture_dir = fs::canonicalize(capture_dir)
+        .map_err(|error| format!("Could not resolve recording directory: {error}"))?;
+    let canonical_file = fs::canonicalize(path)
+        .map_err(|error| format!("Could not resolve recording file: {error}"))?;
+
+    if !canonical_file.starts_with(&canonical_capture_dir) {
+        return Err("Recording file is outside the OpenMinutes recording directory.".to_string());
+    }
+    if canonical_file
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .map(str::to_ascii_lowercase)
+        .as_deref()
+        != Some("wav")
+    {
+        return Err("Only retained WAV recordings can be deleted from this action.".to_string());
+    }
+
+    fs::remove_file(&canonical_file)
+        .map_err(|error| format!("Could not delete retained microphone recording: {error}"))?;
+
+    Ok(DeletedAudioCaptureFile {
+        path: canonical_file.to_string_lossy().into_owned(),
+        deleted: true,
     })
 }
 
@@ -303,9 +394,73 @@ fn finalize_wav_writer(writer: &SharedWavWriter) -> Result<(), String> {
     Ok(())
 }
 
-fn write_f32_samples(input: &[f32], writer: &SharedWavWriter) {
+fn start_realtime_transcription(
+    app: AppHandle,
+    meeting_id: String,
+    config: Option<RealtimeTranscriptionConfig>,
+    sample_rate: u32,
+    channels: u16,
+) -> SharedRealtimeSender {
+    let Some(config) = config else {
+        return Arc::new(Mutex::new(None));
+    };
+
+    let (sender, receiver) = tokio_mpsc::unbounded_channel::<Vec<i16>>();
+    tauri::async_runtime::spawn(async move {
+        let started_at = Instant::now();
+        let mut line_index = 0usize;
+        let doubao_config = doubao_realtime::DoubaoRealtimeConfig::new(config.api_key)
+            .with_endpoint(config.endpoint)
+            .with_resource_id(config.resource_id)
+            .with_model_name(config.model_name);
+        let emit_app = app.clone();
+        let emit_meeting_id = meeting_id.clone();
+
+        let result = doubao_realtime::stream_pcm_chunks(
+            doubao_config,
+            sample_rate,
+            channels,
+            receiver,
+            move |text| {
+                line_index += 1;
+                let payload = RealtimeTranscriptPayload {
+                    meeting_id: emit_meeting_id.clone(),
+                    line: RealtimeTranscriptLine {
+                        id: format!("{}-live-{}", emit_meeting_id, line_index),
+                        time: format_clock_time(started_at.elapsed().as_millis() as u64),
+                        speaker: "Speaker".to_string(),
+                        text,
+                    },
+                };
+                let _ = emit_app.emit(REALTIME_TRANSCRIPT_EVENT, payload);
+            },
+        )
+        .await;
+
+        if let Err(message) = result {
+            let _ = app.emit(
+                REALTIME_TRANSCRIPT_ERROR_EVENT,
+                RealtimeTranscriptErrorPayload {
+                    meeting_id,
+                    message,
+                },
+            );
+        }
+    });
+
+    Arc::new(Mutex::new(Some(sender)))
+}
+
+fn close_realtime_sender(sender: &SharedRealtimeSender) {
+    if let Ok(mut guard) = sender.lock() {
+        let _ = guard.take();
+    }
+}
+
+fn write_f32_samples(input: &[f32], writer: &SharedWavWriter, realtime: &SharedRealtimeSender) {
     write_samples(
         writer,
+        realtime,
         input.iter().map(|sample| {
             let scaled = sample.clamp(-1.0, 1.0) * i16::MAX as f32;
             scaled as i16
@@ -313,21 +468,29 @@ fn write_f32_samples(input: &[f32], writer: &SharedWavWriter) {
     )
 }
 
-fn write_i16_samples(input: &[i16], writer: &SharedWavWriter) {
-    write_samples(writer, input.iter().copied())
+fn write_i16_samples(input: &[i16], writer: &SharedWavWriter, realtime: &SharedRealtimeSender) {
+    write_samples(writer, realtime, input.iter().copied())
 }
 
-fn write_u16_samples(input: &[u16], writer: &SharedWavWriter) {
+fn write_u16_samples(input: &[u16], writer: &SharedWavWriter, realtime: &SharedRealtimeSender) {
     write_samples(
         writer,
+        realtime,
         input.iter().map(|sample| (*sample as i32 - 32768) as i16),
     )
 }
 
-fn write_samples<I>(writer: &SharedWavWriter, samples: I)
+fn write_samples<I>(writer: &SharedWavWriter, realtime: &SharedRealtimeSender, samples: I)
 where
     I: IntoIterator<Item = i16>,
 {
+    let samples = samples.into_iter().collect::<Vec<_>>();
+    if let Ok(guard) = realtime.try_lock() {
+        if let Some(sender) = guard.as_ref() {
+            let _ = sender.send(samples.clone());
+        }
+    }
+
     if let Ok(mut guard) = writer.try_lock() {
         if let Some(writer) = guard.as_mut() {
             for sample in samples {
@@ -335,6 +498,36 @@ where
             }
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RealtimeTranscriptPayload {
+    meeting_id: String,
+    line: RealtimeTranscriptLine,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RealtimeTranscriptLine {
+    id: String,
+    time: String,
+    speaker: String,
+    text: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RealtimeTranscriptErrorPayload {
+    meeting_id: String,
+    message: String,
+}
+
+fn format_clock_time(duration_millis: u64) -> String {
+    let total_seconds = duration_millis / 1_000;
+    let minutes = total_seconds / 60;
+    let seconds = total_seconds % 60;
+    format!("{minutes:02}:{seconds:02}")
 }
 
 fn capture_dir(app: &AppHandle) -> Result<PathBuf, String> {
@@ -391,7 +584,9 @@ fn unix_seconds_now() -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{capture_file_name, read_captured_audio_file, sanitize_capture_id};
+    use super::{
+        capture_file_name, delete_retained_file_at, read_captured_audio_file, sanitize_capture_id,
+    };
     use std::{fs, path::PathBuf};
 
     #[test]
@@ -432,7 +627,43 @@ mod tests {
         let _ = fs::remove_file(&path);
     }
 
+    #[test]
+    fn deletes_retained_recording_inside_capture_dir() {
+        let capture_dir = test_capture_dir("delete-retained");
+        fs::create_dir_all(&capture_dir).expect("create capture dir");
+        let path = capture_dir.join("recording.wav");
+        fs::write(&path, b"RIFF").expect("write retained recording");
+
+        let deleted = delete_retained_file_at(&capture_dir, &path).expect("delete retained audio");
+
+        assert!(deleted.deleted);
+        assert!(!path.exists());
+        let _ = fs::remove_dir_all(&capture_dir);
+    }
+
+    #[test]
+    fn rejects_recording_delete_outside_capture_dir() {
+        let capture_dir = test_capture_dir("delete-reject-capture");
+        let outside_dir = test_capture_dir("delete-reject-outside");
+        fs::create_dir_all(&capture_dir).expect("create capture dir");
+        fs::create_dir_all(&outside_dir).expect("create outside dir");
+        let outside = outside_dir.join("recording.wav");
+        fs::write(&outside, b"RIFF").expect("write outside recording");
+
+        let error =
+            delete_retained_file_at(&capture_dir, &outside).expect_err("reject outside file");
+
+        assert!(error.contains("outside"));
+        assert!(outside.exists());
+        let _ = fs::remove_dir_all(&capture_dir);
+        let _ = fs::remove_dir_all(&outside_dir);
+    }
+
     fn test_recording_path(name: &str) -> PathBuf {
         std::env::temp_dir().join(format!("openminutes-{name}-{}.wav", std::process::id()))
+    }
+
+    fn test_capture_dir(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!("openminutes-{name}-{}", std::process::id()))
     }
 }

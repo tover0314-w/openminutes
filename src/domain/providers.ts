@@ -92,39 +92,31 @@ export class MockAiNotesProvider implements AiNotesProvider {
   readonly label = 'Mock AI Notes'
 
   async generateNotes(input: AiNotesGenerationInput): Promise<AiNotes> {
-    const decisions = input.meeting.markers
-      .filter((marker) => marker.kind === 'Decision')
-      .map((marker) => marker.text)
-    const actionItems = input.meeting.markers
-      .filter((marker) => marker.kind === 'Action')
-      .map((marker, index) => ({
-        id: `mock-action-${index + 1}`,
-        text: marker.text,
-      }))
-    const openQuestions = input.meeting.markers
-      .filter((marker) => marker.kind === 'Question')
-      .map((marker) => marker.text)
+    const manualNotes = input.meeting.manualNotes.trim()
 
     return {
-      summary: `Local demo notes for ${input.meeting.title}. Review the imported transcript, edit the source text, then switch to a real provider for production-quality notes.`,
-      decisions: decisions.length ? decisions : ['Use local demo mode only for product walkthroughs and offline testing.'],
-      actionItems: actionItems.length
-        ? actionItems
-        : [
-            {
-              id: 'mock-action-1',
-              text: 'Replace demo transcription with provider STT before sharing externally.',
-              owner: input.meeting.participants[0] ?? 'Owner',
-            },
-          ],
-      openQuestions: openQuestions.length
-        ? openQuestions
-        : ['Which real STT and AI Notes providers should this workspace use?'],
-      keyPoints: [
-        `${input.meeting.transcript.length} transcript lines are available as editable source text.`,
-        input.context.split('\n').find(Boolean) ?? input.meeting.title,
+      summary: `This local review confirms that ${input.meeting.title} has enough source material to produce AI Notes, but it should not be treated as production-quality analysis until a real STT and AI provider are configured. The useful outcome is workflow validation: imported audio becomes editable transcript, then Review turns transcript plus human emphasis into a readable meeting result.`,
+      decisions: manualNotes
+        ? ['Use the user-written notes as the strongest emphasis source.']
+        : ['Use local demo mode only for product walkthroughs and offline testing.'],
+      actionItems: [
+        {
+          id: 'mock-action-1',
+          text: 'Replace demo transcription with provider STT before sharing externally.',
+          owner: input.meeting.participants[0] ?? 'Owner',
+        },
       ],
-      followUpDraft: `Follow up on ${input.meeting.title}: the local demo flow is working, and the next step is to configure real provider keys for production use.`,
+      openQuestions: [
+        'Which real STT provider should be used for low-latency meeting capture?',
+        'Which AI Notes provider gives the best review quality at acceptable cost?',
+      ],
+      keyPoints: [
+        `${input.meeting.transcript.length} transcript lines are available as editable source text, so the Review pane can link conclusions back to original material.`,
+        manualNotes
+          ? 'Manual notes influence the final Review narrative without needing separate marker buttons.'
+          : 'Manual notes should influence the final Review narrative when the user records them.',
+      ],
+      followUpDraft: `Follow up on ${input.meeting.title}: the local demo flow is working end to end. Next step is to configure real provider keys, compare transcription quality, and review whether the generated notes are strong enough for daily use.`,
     }
   }
 }

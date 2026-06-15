@@ -23,12 +23,11 @@ describe('meeting view model', () => {
     expect(view.canExport).toBe(true)
   })
 
-  it('builds AI context with manual notes and markers before transcript', () => {
+  it('builds AI context with manual notes before transcript', () => {
     const context = buildAiNotesContext(createDemoMeeting('ready'))
 
-    expect(context.indexOf('Manual notes:')).toBeLessThan(context.indexOf('Markers:'))
-    expect(context.indexOf('Markers:')).toBeLessThan(context.indexOf('Transcript:'))
-    expect(context).toContain('[Decision 04:18]')
+    expect(context.indexOf('Manual notes:')).toBeLessThan(context.indexOf('Transcript:'))
+    expect(context).not.toContain('Markers:')
     expect(context).toContain('Alex: I think the meeting product should stay separate first.')
   })
 })

@@ -1,24 +1,24 @@
 import { type ApiKeyRepository } from '../domain/apiKey'
-import { type AiProviderId } from '../domain/settings'
+import { type ApiProviderId } from '../domain/settings'
 import { getTauriInvoke, type TauriInvoke } from './tauri'
 
 export class TauriApiKeyRepository implements ApiKeyRepository {
   constructor(private readonly invoke: TauriInvoke) {}
 
-  has(provider: AiProviderId): Promise<boolean> {
+  has(provider: ApiProviderId): Promise<boolean> {
     return this.invoke<boolean>('has_provider_api_key', { provider })
   }
 
-  async load(provider: AiProviderId): Promise<string | undefined> {
+  async load(provider: ApiProviderId): Promise<string | undefined> {
     const apiKey = await this.invoke<string | null>('load_provider_api_key', { provider })
     return apiKey ?? undefined
   }
 
-  save(provider: AiProviderId, apiKey: string): Promise<void> {
+  save(provider: ApiProviderId, apiKey: string): Promise<void> {
     return this.invoke<void>('save_provider_api_key', { provider, apiKey })
   }
 
-  delete(provider: AiProviderId): Promise<void> {
+  delete(provider: ApiProviderId): Promise<void> {
     return this.invoke<void>('delete_provider_api_key', { provider })
   }
 }
