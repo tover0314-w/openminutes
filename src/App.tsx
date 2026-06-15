@@ -19,7 +19,10 @@ import {
 } from './domain/meeting'
 import { type ApiKeyRepository, createMemoryApiKeyRepository } from './domain/apiKey'
 import { createTauriApiKeyRepository } from './desktop/apiKeyRepository'
-import { createTauriAudioCaptureSession } from './desktop/audioCapture'
+import {
+  createTauriAudioCaptureSession,
+  type AudioCaptureStartOptions,
+} from './desktop/audioCapture'
 import { selectTauriAudioFile } from './desktop/audioImport'
 import { exportMarkdownFile } from './desktop/markdownExport'
 import { createTauriMeetingRepository } from './desktop/meetingRepository'
@@ -221,10 +224,10 @@ export function App() {
 
     try {
       const captureSession = await createTauriAudioCaptureSession()
-      await captureSession?.start(recordingMeeting.id, {
-        realtimeProvider: appSettings.realtimeTranscriptionProvider,
-        realtimeModel: appSettings.realtimeModel,
-      })
+      await captureSession?.start(
+        recordingMeeting.id,
+        await realtimeCaptureOptions(appSettings, apiKeyRepository),
+      )
     } catch (error) {
       setMeeting((current) =>
         current.id === recordingMeeting.id
@@ -2162,7 +2165,41 @@ function StatusLabel({ phase, compact = false }: { phase: MeetingPhase; compact?
 }
 
 function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : 'Unknown error.'
+  if (error instanceof Error) return error.message
+  if (typeof error === 'string') return error
+  if (typeof error === 'object' && error !== null && 'message' in error) {
+    const message = (error as { message?: unknown }).message
+    if (typeof message === 'string' && message.trim()) return message
+  }
+
+  try {
+    const serialized = JSON.stringify(error)
+    if (serialized && serialized !== '{}') return serialized
+  } catch {
+    // Fall through to the generic message.
+  }
+
+  return 'Unknown error.'
+}
+
+async function realtimeCaptureOptions(
+  settings: AppSettings,
+  apiKeyRepository: ApiKeyRepository,
+): Promise<AudioCaptureStartOptions> {
+  const realtimeProvider = settings.realtimeTranscriptionProvider
+  const keyProvider = providerKeyForRealtime(realtimeProvider)
+
+  try {
+    const hasApiKey = await apiKeyRepository.has(keyProvider)
+    if (!hasApiKey) return {}
+  } catch {
+    return {}
+  }
+
+  return {
+    realtimeProvider,
+    realtimeModel: settings.realtimeModel,
+  }
 }
 
 function upsertTranscriptLine(transcript: TranscriptLine[], line: TranscriptLine): TranscriptLine[] {

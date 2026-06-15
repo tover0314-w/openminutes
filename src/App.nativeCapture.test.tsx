@@ -1,6 +1,6 @@
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { App } from './App'
 
 const captureMocks = vi.hoisted(() => {
@@ -33,6 +33,15 @@ vi.mock('./desktop/tauri', () => ({
 }))
 
 describe('App native microphone capture', () => {
+  beforeEach(() => {
+    captureMocks.start.mockReset()
+    captureMocks.start.mockResolvedValue({ recording: true })
+    captureMocks.stop.mockClear()
+    captureMocks.status.mockClear()
+    captureMocks.deleteFile.mockClear()
+    captureMocks.create.mockClear()
+  })
+
   it('runs the desktop meeting flow from native capture through AI Notes and raw audio cleanup', async () => {
     const user = userEvent.setup()
     const writeText = vi.fn().mockResolvedValue(undefined)
@@ -53,10 +62,7 @@ describe('App native microphone capture', () => {
 
     await user.click(screen.getByRole('button', { name: /start meeting/i }))
     await waitFor(() => {
-      expect(captureMocks.start).toHaveBeenCalledWith(expect.stringMatching(/^meeting-/), {
-        realtimeModel: 'bigmodel',
-        realtimeProvider: 'doubao-realtime',
-      })
+      expect(captureMocks.start).toHaveBeenCalledWith(expect.stringMatching(/^meeting-/), {})
     })
 
     const meeting = screen.getByRole('region', { name: /meeting/i })
@@ -85,5 +91,17 @@ describe('App native microphone capture', () => {
       expect(captureMocks.deleteFile).toHaveBeenCalledWith('/tmp/native-recording.wav')
     })
     expect(screen.queryByText(/^raw audio$/i)).not.toBeInTheDocument()
+  })
+
+  it('shows string errors from native capture instead of a generic unknown error', async () => {
+    const user = userEvent.setup()
+    captureMocks.start.mockRejectedValueOnce('Microphone permission was denied.')
+
+    render(<App />)
+
+    await user.click(screen.getByRole('button', { name: /start meeting/i }))
+
+    expect(await screen.findByText(/microphone permission was denied/i)).toBeInTheDocument()
+    expect(screen.queryByText(/unknown error/i)).not.toBeInTheDocument()
   })
 })
