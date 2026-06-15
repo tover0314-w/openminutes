@@ -26,7 +26,7 @@ describe('App', () => {
     expect(await screen.findByLabelText(/^ai notes$/i)).toBeInTheDocument()
     expect(await screen.findByText(/local review confirms that product sync with alex/i)).toBeInTheDocument()
     expect(screen.queryByRole('textbox', { name: /ai summary/i })).not.toBeInTheDocument()
-    expect(screen.getByRole('complementary', { name: /original transcript/i })).toBeInTheDocument()
+    expect(screen.getByRole('complementary', { name: /sources/i })).toBeInTheDocument()
   })
 
   it('links the Review document to the human note source', async () => {
@@ -41,14 +41,16 @@ describe('App', () => {
 
     const humanCitation = screen.getAllByRole('button').find((button) => /\[H\d+\]/.test(button.textContent ?? ''))
     expect(humanCitation).toBeDefined()
+    const expectedSourceText = humanCitation?.getAttribute('title') ?? ''
     await user.click(humanCitation as HTMLElement)
 
-    expect(screen.getByText(/ship macos-first/i)).toBeInTheDocument()
-    expect(screen.getByText(/prototype desktop token-compatible ui/i)).toBeInTheDocument()
-    expect(screen.getByLabelText(/human note text/i).querySelector('.selected-source')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /back to review/i })).toBeInTheDocument()
-
-    await user.click(screen.getByRole('button', { name: /back to review/i }))
+    const sourcesPane = screen.getByRole('complementary', { name: /sources/i })
+    expect(within(sourcesPane).getByText(/ship macos-first/i)).toBeInTheDocument()
+    expect(within(sourcesPane).getByText(/prototype desktop token-compatible ui/i)).toBeInTheDocument()
+    expect(
+      within(sourcesPane).getByLabelText(/human notes source/i).querySelector('.selected-source'),
+    ).toHaveTextContent(expectedSourceText)
+    expect(screen.queryByRole('button', { name: /back to review/i })).not.toBeInTheDocument()
     expect(screen.getByLabelText(/ai notes readable document/i)).toBeInTheDocument()
   })
 
@@ -195,7 +197,7 @@ describe('App', () => {
     expect(input).toBeInstanceOf(HTMLInputElement)
     await user.upload(input as HTMLInputElement, new File(['audio'], 'customer-call.wav', { type: 'audio/wav' }))
 
-    const transcriptPane = await screen.findByRole('complementary', { name: /original transcript/i })
+    const transcriptPane = await screen.findByRole('complementary', { name: /sources/i })
     expect(
       within(transcriptPane).getByText(/local demo transcript generated for customer-call/i),
     ).toBeInTheDocument()
@@ -287,7 +289,7 @@ describe('App', () => {
       await user.upload(input as HTMLInputElement, new File(['audio'], 'provider-call.wav', { type: 'audio/wav' }))
 
       const transcriptPane = await screen.findByRole('complementary', {
-        name: /original transcript/i,
+        name: /sources/i,
       })
       expect(within(transcriptPane).getByText(/provider transcript line/i)).toBeInTheDocument()
 
@@ -337,7 +339,7 @@ describe('App', () => {
     ).toBeInTheDocument()
   })
 
-  it('opens the Focus source from the AI Notes citation marker', async () => {
+  it('highlights Review sources from citation markers and can open the Focus source', async () => {
     const user = userEvent.setup()
     render(<App />)
     const nav = screen.getByRole('navigation', { name: /main navigation/i })
@@ -345,12 +347,22 @@ describe('App', () => {
     await user.click(within(nav).getByRole('button', { name: /^meeting$/i }))
     await user.click(screen.getByRole('button', { name: /stop recording from meeting/i }))
 
-    const humanCitation = screen.getAllByRole('button').find((button) => /\[H\d+\]/.test(button.textContent ?? ''))
+    const humanCitation = screen
+      .getAllByRole('button')
+      .find((button) => /right side is original transcript\/source/i.test(button.getAttribute('title') ?? ''))
     expect(humanCitation).toBeDefined()
     await user.click(humanCitation as HTMLElement)
 
-    expect(screen.getByText(/right side is original transcript\/source/i)).toBeInTheDocument()
-    expect(screen.getByLabelText(/human note text/i).querySelector('.selected-source')).toBeInTheDocument()
+    const sourcesPane = screen.getByRole('complementary', { name: /sources/i })
+    expect(within(sourcesPane).getByText(/right side is original transcript\/source/i)).toBeInTheDocument()
+    expect(
+      within(sourcesPane).getByLabelText(/human notes source/i).querySelector('.selected-source'),
+    ).toHaveTextContent(/right side is original transcript\/source/i)
+
+    await user.click(screen.getByRole('button', { name: /^focus$/i }))
+    expect(screen.getByLabelText(/human note text/i).querySelector('.selected-source')).toHaveTextContent(
+      /right side is original transcript\/source/i,
+    )
 
     await user.click(screen.getByRole('button', { name: /back to review/i }))
     const transcriptCitation = screen
@@ -359,9 +371,8 @@ describe('App', () => {
     expect(transcriptCitation).toBeDefined()
     await user.click(transcriptCitation as HTMLElement)
 
-    const transcriptPane = screen.getByRole('complementary', { name: /original transcript/i })
-    expect(transcriptPane.querySelector('.selected-source')).toBeInTheDocument()
-    expect(screen.getByRole('complementary', { name: /original transcript/i })).toBeInTheDocument()
+    const transcriptPane = screen.getByRole('complementary', { name: /sources/i })
+    expect(transcriptPane.querySelector('.transcript-line.selected-source')).toBeInTheDocument()
   })
 
   it('can add and delete original transcript lines in Review', async () => {
@@ -398,7 +409,7 @@ describe('App', () => {
     await user.click(within(nav).getByRole('button', { name: /^meeting$/i }))
     await user.click(screen.getByRole('button', { name: /stop recording from meeting/i }))
 
-    const transcriptPane = screen.getByRole('complementary', { name: /original transcript/i })
+    const transcriptPane = screen.getByRole('complementary', { name: /sources/i })
     await user.click(within(transcriptPane).getByText(/speakers/i))
 
     const alexRename = within(transcriptPane).getByRole('textbox', { name: /rename speaker alex/i })

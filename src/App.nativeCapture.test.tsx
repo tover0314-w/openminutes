@@ -2,6 +2,7 @@ import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { App } from './App'
+import { APP_SETTINGS_STORAGE_KEY, defaultAppSettings } from './domain/settings'
 
 const captureMocks = vi.hoisted(() => {
   const start = vi.fn(async () => ({ recording: true }))
@@ -71,7 +72,7 @@ describe('App native microphone capture', () => {
     await waitFor(() => {
       expect(captureMocks.stop).toHaveBeenCalledWith({ keepFile: true })
     })
-    const transcriptPane = await screen.findByRole('complementary', { name: /original transcript/i })
+    const transcriptPane = await screen.findByRole('complementary', { name: /sources/i })
     expect(
       within(transcriptPane).getByText(/local demo transcript generated for native-recording/i),
     ).toBeInTheDocument()
@@ -96,6 +97,14 @@ describe('App native microphone capture', () => {
   it('shows string errors from native capture instead of a generic unknown error', async () => {
     const user = userEvent.setup()
     captureMocks.start.mockRejectedValueOnce('Microphone permission was denied.')
+    localStorage.setItem(
+      APP_SETTINGS_STORAGE_KEY,
+      JSON.stringify({
+        ...defaultAppSettings,
+        transcriptionMode: 'local-demo',
+        notesMode: 'local-demo',
+      }),
+    )
 
     render(<App />)
 

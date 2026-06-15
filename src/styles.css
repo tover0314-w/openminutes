@@ -213,6 +213,17 @@ button {
   font-weight: 520;
 }
 
+.workflow-alert {
+  margin: 10px 20px 0;
+  border: 1px solid rgba(255, 149, 0, 0.24);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 149, 0, 0.1);
+  color: #8a5200;
+  padding: 9px 12px;
+  font-size: 12px;
+  line-height: 17px;
+}
+
 .title-actions {
   display: flex;
   gap: 8px;
@@ -365,6 +376,10 @@ button {
   background: transparent;
   color: var(--color-text-secondary);
   font-size: 12px;
+}
+
+.mode-switch button:disabled:not(.active) {
+  opacity: 0.42;
 }
 
 .editor-shell {
@@ -872,6 +887,62 @@ button {
 
 .transcript-pane {
   min-width: 0;
+}
+
+.source-notes-block {
+  position: relative;
+  z-index: 2;
+  border-bottom: 1px solid var(--color-border);
+  padding: 12px 16px;
+  display: grid;
+  gap: 8px;
+}
+
+.source-notes-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.source-notes-title strong {
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.source-notes-title span,
+.source-notes-empty {
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.source-notes-list {
+  max-height: 132px;
+  overflow: auto;
+  display: grid;
+  gap: 4px;
+}
+
+.source-note-line {
+  min-height: 20px;
+  margin: 0;
+  border-radius: var(--radius-xs);
+  padding: 2px 6px;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 17px;
+  white-space: pre-wrap;
+}
+
+.source-note-line.selected-source {
+  background: rgba(42, 187, 167, 0.13);
+  box-shadow: 0 0 0 1px rgba(42, 187, 167, 0.2);
+  color: var(--color-text-primary);
+}
+
+.source-note-line.empty-line {
+  min-height: 10px;
 }
 
 .transcript-list {
@@ -1508,6 +1579,10 @@ button {
 .settings-action.primary {
   color: white;
   background: #2abab0;
+}
+
+.restore-capsule {
+  justify-self: start;
 }
 
 .settings-error {

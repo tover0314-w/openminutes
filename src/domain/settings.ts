@@ -37,6 +37,7 @@ export interface AppSettings {
   notesModel: string
   useKeychain: boolean
   desktopCapsuleEnabled: boolean
+  desktopCapsuleHidden: boolean
   exportFolder: string
   includeTranscriptInExport: boolean
   slackWebhookLabel: string
@@ -69,6 +70,7 @@ export const defaultAppSettings: AppSettings = {
   notesModel: 'openai/gpt-4.1-mini',
   useKeychain: true,
   desktopCapsuleEnabled: true,
+  desktopCapsuleHidden: false,
   exportFolder: 'Documents/OpenMinutes',
   includeTranscriptInExport: false,
   slackWebhookLabel: 'Webhook placeholder',
@@ -147,6 +149,10 @@ export function normalizeAppSettings(value: unknown): AppSettings {
     desktopCapsuleEnabled: booleanOrDefault(
       partial.desktopCapsuleEnabled,
       defaultAppSettings.desktopCapsuleEnabled,
+    ),
+    desktopCapsuleHidden: booleanOrDefault(
+      partial.desktopCapsuleHidden,
+      false,
     ),
     exportFolder: stringOrDefault(partial.exportFolder, defaultAppSettings.exportFolder),
     includeTranscriptInExport: booleanOrDefault(

@@ -183,6 +183,7 @@ export function App() {
   const [apiConnectionStatus, setApiConnectionStatus] = useState<ApiConnectionStatus>('idle')
   const [apiConnectionResult, setApiConnectionResult] =
     useState<ProviderConnectionTestResult | undefined>()
+  const [workflowError, setWorkflowError] = useState('')
   const capsuleCommandHandlersRef = useRef<{
     start: () => void | Promise<void>
     stop: () => void | Promise<void>
@@ -194,8 +195,20 @@ export function App() {
   })
   const view = getMeetingViewModel(meeting)
   const capsuleStatePayload = useMemo(
-    () => createCapsuleStatePayload(meeting, Date.now(), appSettings.desktopCapsuleEnabled),
-    [appSettings.desktopCapsuleEnabled, meeting.duration, meeting.id, meeting.phase, meeting.title],
+    () =>
+      createCapsuleStatePayload(
+        meeting,
+        Date.now(),
+        appSettings.desktopCapsuleEnabled && !appSettings.desktopCapsuleHidden,
+      ),
+    [
+      appSettings.desktopCapsuleEnabled,
+      appSettings.desktopCapsuleHidden,
+      meeting.duration,
+      meeting.id,
+      meeting.phase,
+      meeting.title,
+    ],
   )
 
   const meetings = useMemo(
@@ -209,6 +222,7 @@ export function App() {
   )
 
   const updateSettings = (patch: Partial<AppSettings>) => {
+    setWorkflowError('')
     setAppSettings((current) => ({ ...current, ...patch }))
   }
 
@@ -226,6 +240,18 @@ export function App() {
   }
 
   const startMeeting = async () => {
+    const repository = await resolveApiKeyRepository()
+    const setupError = await startMeetingSetupError(appSettings, repository)
+    if (setupError) {
+      setWorkflowError(setupError)
+      setTranscriptionStatus('configuration_error')
+      setTranscriptionError(setupError)
+      setApiKeyProvider(providerKeyForRealtime(appSettings.realtimeTranscriptionProvider))
+      setSettingsPane('transcription')
+      setRoute('settings')
+      return
+    }
+
     const recordingMeeting = createRecordingMeeting()
     setMeeting(recordingMeeting)
     setTranscriptionStatus('idle')
@@ -233,13 +259,15 @@ export function App() {
     setLastAudioImport(undefined)
     setAiGenerationStatus('idle')
     setAiGenerationError('')
+    setWorkflowError('')
+    updateSettings({ desktopCapsuleEnabled: true, desktopCapsuleHidden: false })
     setRoute('meeting')
 
     try {
       const captureSession = await createTauriAudioCaptureSession()
       await captureSession?.start(
         recordingMeeting.id,
-        await realtimeCaptureOptions(appSettings, await resolveApiKeyRepository()),
+        await realtimeCaptureOptions(appSettings, repository),
       )
     } catch (error) {
       setMeeting((current) =>
@@ -500,6 +528,7 @@ export function App() {
         ...current,
         [provider]: true,
       }))
+      setWorkflowError('')
       setApiKeyStatus('saved')
     } catch (error) {
       setApiKeyStatus('error')
@@ -514,12 +543,30 @@ export function App() {
     setApiKeyProvider(provider)
 
     try {
+      const repository = await resolveApiKeyRepository()
+      const configured = await repository.has(provider)
+      setApiKeyConfiguredByProvider((current) => ({
+        ...current,
+        [provider]: configured,
+      }))
+
+      if (!configured) {
+        throw new Error(`Save a ${providerLabel(provider)} API key before testing.`)
+      }
+
       const result = await testProviderConnection(
         provider,
         providerTestBaseUrl(provider, appSettings),
       )
       setApiConnectionResult(result)
       setApiConnectionStatus(result.ok ? 'success' : 'error')
+      if (result.ok) {
+        setApiKeyConfiguredByProvider((current) => ({
+          ...current,
+          [provider]: true,
+        }))
+        setWorkflowError('')
+      }
     } catch (error) {
       setApiConnectionStatus('error')
       setApiConnectionResult({
@@ -616,7 +663,7 @@ export function App() {
     capsuleCommandHandlersRef.current = {
       start: startMeetingFromShortcut,
       stop: stopRecording,
-      hide: () => updateSettings({ desktopCapsuleEnabled: false }),
+      hide: () => updateSettings({ desktopCapsuleHidden: true }),
     }
   })
 
@@ -856,18 +903,23 @@ export function App() {
             <button className="btn" onClick={openAudioImport} disabled={transcriptionStatus === 'importing'}>
               {transcriptionStatus === 'importing' ? 'Importing' : 'Import'}
             </button>
-            <input
-              ref={audioImportInputRef}
-              type="file"
-              accept="audio/*,.m4a,.mp3,.mp4,.wav,.webm"
-              hidden
-              onChange={importAudioFile}
-            />
             <button className="btn btn-primary" onClick={startMeeting}>
               Start Meeting
             </button>
           </div>
+          <input
+            ref={audioImportInputRef}
+            type="file"
+            accept="audio/*,.m4a,.mp3,.mp4,.wav,.webm"
+            hidden
+            onChange={importAudioFile}
+          />
         </header>
+        {workflowError ? (
+          <div className="workflow-alert" role="alert">
+            {workflowError}
+          </div>
+        ) : null}
 
         {route === 'today' && <TodayPage meetings={meetings} onOpenMeeting={() => setRoute('meeting')} />}
         {route === 'meeting' && (
@@ -1043,10 +1095,13 @@ function MeetingPage({
   const selectReviewCitation = (citation: ReviewCitation) => {
     if (citation.type === 'human') {
       setSelectedHumanSourceId(citation.source.id)
-      setReviewSource('manual')
+      setSelectedTranscriptLineId(undefined)
+      setReviewSource('review')
       return
     }
 
+    setReviewSource('review')
+    setSelectedHumanSourceId(undefined)
     setSelectedTranscriptLineId(citation.line.id)
   }
 
@@ -1089,13 +1144,16 @@ function MeetingPage({
               onSelectCitation={selectReviewCitation}
               onUpdateAiNotes={onUpdateAiNotes}
               onDeleteRawAudio={onDeleteRawAudio}
+              onOpenFocusSource={() => setReviewSource('manual')}
             />
           )}
           <TranscriptPane
-            title="Original Transcript"
-            subtitle="Source for AI Notes"
+            title="Sources"
+            subtitle="Human notes + original transcript"
             meeting={meeting}
             editable
+            manualNotes={meeting.manualNotes}
+            selectedHumanSourceId={selectedHumanSourceId}
             selectedLineId={selectedTranscriptLineId}
             onUpdateTranscript={onUpdateTranscript}
           />
@@ -1131,7 +1189,11 @@ function ManualNotesPane({
         }
         aside={
           <div className="status-row">
-            <ModeSwitch active="focus" />
+            <ModeSwitch
+              active="focus"
+              canReview={sourceMode}
+              onReview={sourceMode ? onBackToReview : undefined}
+            />
             <StatusLabel phase={meeting.phase} />
           </div>
         }
@@ -1196,7 +1258,7 @@ function ManualSourceText({
     <div className="manual-source-text" aria-label="Human note text">
       {lines.map((line, lineIndex) => {
         const source = sourceByLineIndex.get(lineIndex)
-        const isSelected = source?.id === selectedHumanSourceId
+        const isSelected = Boolean(selectedHumanSourceId && source?.id === selectedHumanSourceId)
 
         return (
           <p
@@ -1232,6 +1294,7 @@ function AiNotesPane({
   onSelectCitation,
   onUpdateAiNotes,
   onDeleteRawAudio,
+  onOpenFocusSource,
 }: {
   meeting: Meeting
   onRegenerate: () => void | Promise<void>
@@ -1248,6 +1311,7 @@ function AiNotesPane({
   onSelectCitation: (citation: ReviewCitation) => void
   onUpdateAiNotes: (aiNotes: AiNotes) => void
   onDeleteRawAudio: () => void | Promise<void>
+  onOpenFocusSource: () => void
 }) {
   const [editing, setEditing] = useState(false)
   const notes = meeting.aiNotes
@@ -1291,10 +1355,22 @@ function AiNotesPane({
     transcriptionStatus === 'configuration_error'
       ? 'API key is not configured. Add one in Settings > AI.'
       : transcriptionError
-  const emptyTitle = isImportingTranscript ? 'Importing Audio' : 'Generate AI Notes'
+  const emptyTitle = isImportingTranscript
+    ? 'Finalizing Transcript'
+    : isGenerating
+      ? 'Writing AI Notes'
+      : meeting.phase === 'recording'
+        ? 'AI Notes After Stop'
+        : 'No AI Notes Yet'
   const emptyCopy = isImportingTranscript
-    ? 'Transcription is running through the configured STT provider.'
-    : 'Use manual notes and finalized transcript to create the Review content.'
+    ? 'OpenMinutes is turning the recording into source text.'
+    : isGenerating
+      ? 'OpenMinutes is using your Focus notes and transcript to write the Review.'
+      : meeting.phase === 'recording'
+        ? 'Review stays empty while recording. Stop recording to generate AI Notes.'
+        : hasGenerationContext
+          ? 'Generate AI Notes from the captured Focus notes and transcript.'
+          : 'Capture human notes or transcript before generating a Review.'
   const reviewDocument = notes ? notes.document ?? formatAiNotesDocument(notes) : ''
 
   return (
@@ -1304,7 +1380,7 @@ function AiNotesPane({
         subtitle="Review mode - AI Notes generated from notes + transcript"
         aside={
           <div className="status-row">
-            <ModeSwitch active="review" />
+            <ModeSwitch active="review" onFocus={onOpenFocusSource} />
             <StatusLabel phase={meeting.phase} />
           </div>
         }
@@ -1511,6 +1587,8 @@ function TranscriptPane({
   meeting,
   live = false,
   editable = false,
+  manualNotes,
+  selectedHumanSourceId,
   selectedLineId,
   onUpdateTranscript,
 }: {
@@ -1519,6 +1597,8 @@ function TranscriptPane({
   meeting: Meeting
   live?: boolean
   editable?: boolean
+  manualNotes?: string
+  selectedHumanSourceId?: string
   selectedLineId?: string
   onUpdateTranscript?: (transcript: TranscriptLine[]) => void
 }) {
@@ -1578,6 +1658,9 @@ function TranscriptPane({
   return (
     <aside className="pane jelly-card transcript-pane" aria-label={title}>
       <PaneHeader title={title} subtitle={subtitle} aside={live ? <span className="chip">Live</span> : <span className="chip">Source</span>} />
+      {manualNotes !== undefined ? (
+        <SourceNotesBlock manualNotes={manualNotes} selectedHumanSourceId={selectedHumanSourceId} />
+      ) : null}
       <div className="transcript-list">
         {meeting.transcript.map((line, index) => {
           const isEditing = editable && editingLineId === line.id
@@ -1697,6 +1780,56 @@ function TranscriptPane({
         </div>
       ) : null}
     </aside>
+  )
+}
+
+function SourceNotesBlock({
+  manualNotes,
+  selectedHumanSourceId,
+}: {
+  manualNotes: string
+  selectedHumanSourceId?: string
+}) {
+  const selectedSourceRef = useRef<HTMLParagraphElement | null>(null)
+  const sources = getHumanNoteSources(manualNotes)
+  const sourceByLineIndex = new Map(sources.map((source) => [source.lineIndex, source]))
+  const lines = manualNotes.trim() ? manualNotes.split('\n') : []
+
+  useEffect(() => {
+    selectedSourceRef.current?.scrollIntoView?.({ block: 'center', behavior: 'smooth' })
+  }, [selectedHumanSourceId])
+
+  return (
+    <section className="source-notes-block" aria-label="Human notes source">
+      <div className="source-notes-title">
+        <strong>Human Notes</strong>
+        <span>{lines.length ? `${sources.length || lines.length} lines` : 'Empty'}</span>
+      </div>
+      {lines.length ? (
+        <div className="source-notes-list">
+          {lines.map((line, lineIndex) => {
+            const source = sourceByLineIndex.get(lineIndex)
+            const isSelected = Boolean(selectedHumanSourceId && source?.id === selectedHumanSourceId)
+
+            return (
+              <p
+                key={`${lineIndex}-${line}`}
+                ref={(node) => {
+                  if (isSelected) selectedSourceRef.current = node
+                }}
+                className={`source-note-line ${isSelected ? 'selected-source' : ''} ${
+                  line.trim() ? '' : 'empty-line'
+                }`}
+              >
+                {line}
+              </p>
+            )
+          })}
+        </div>
+      ) : (
+        <p className="source-notes-empty">No human notes captured.</p>
+      )}
+    </section>
   )
 }
 
@@ -1867,11 +2000,23 @@ function SettingsContent({
           <ToggleRow
             title="Desktop capsule"
             description="Show the floating logo for one-click meeting capture."
-            checked={settings.desktopCapsuleEnabled}
+            checked={settings.desktopCapsuleEnabled && !settings.desktopCapsuleHidden}
             onToggle={() =>
-              onUpdateSettings({ desktopCapsuleEnabled: !settings.desktopCapsuleEnabled })
+              onUpdateSettings(
+                settings.desktopCapsuleEnabled && !settings.desktopCapsuleHidden
+                  ? { desktopCapsuleHidden: true }
+                  : { desktopCapsuleEnabled: true, desktopCapsuleHidden: false },
+              )
             }
           />
+          {settings.desktopCapsuleHidden ? (
+            <button
+              className="settings-action restore-capsule"
+              onClick={() => onUpdateSettings({ desktopCapsuleEnabled: true, desktopCapsuleHidden: false })}
+            >
+              Restore Capsule
+            </button>
+          ) : null}
           <SettingsInput label="Start shortcut" value={MEETING_GLOBAL_SHORTCUT_LABEL} readOnly />
         </FieldGroup>
         <FieldGroup label="System audio">
@@ -2167,11 +2312,35 @@ function PaneHeader({
   )
 }
 
-function ModeSwitch({ active }: { active: 'focus' | 'review' }) {
+function ModeSwitch({
+  active,
+  canReview = true,
+  onFocus,
+  onReview,
+}: {
+  active: 'focus' | 'review'
+  canReview?: boolean
+  onFocus?: () => void
+  onReview?: () => void
+}) {
   return (
     <div className="mode-switch" aria-label="Meeting mode">
-      <button className={active === 'focus' ? 'active jelly-nav-active' : ''}>Focus</button>
-      <button className={active === 'review' ? 'active jelly-nav-active' : ''}>Review</button>
+      <button
+        type="button"
+        className={active === 'focus' ? 'active jelly-nav-active' : ''}
+        disabled={active === 'focus' || !onFocus}
+        onClick={onFocus}
+      >
+        Focus
+      </button>
+      <button
+        type="button"
+        className={active === 'review' ? 'active jelly-nav-active' : ''}
+        disabled={active === 'review' || !canReview || !onReview}
+        onClick={onReview}
+      >
+        Review
+      </button>
     </div>
   )
 }
@@ -2219,6 +2388,24 @@ async function realtimeCaptureOptions(
     realtimeProvider,
     realtimeModel: settings.realtimeModel,
   }
+}
+
+async function startMeetingSetupError(
+  settings: AppSettings,
+  apiKeyRepository: ApiKeyRepository,
+): Promise<string | undefined> {
+  if (!isTauriRuntime()) return undefined
+  if (settings.transcriptionMode !== 'provider') return undefined
+
+  const keyProvider = providerKeyForRealtime(settings.realtimeTranscriptionProvider)
+
+  try {
+    if (await apiKeyRepository.has(keyProvider)) return undefined
+  } catch (error) {
+    return `Cannot read ${providerLabel(keyProvider)} API key status: ${errorMessage(error)}`
+  }
+
+  return `Realtime transcript needs a ${providerLabel(keyProvider)} API key before recording.`
 }
 
 function upsertTranscriptLine(transcript: TranscriptLine[], line: TranscriptLine): TranscriptLine[] {

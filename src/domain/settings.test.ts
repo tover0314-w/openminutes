@@ -47,6 +47,16 @@ describe('normalizeAppSettings', () => {
     expect(settings.realtimeTranscriptionProvider).toBe('doubao-realtime')
   })
 
+  it('keeps the desktop capsule hidden flag separate from enablement', () => {
+    const settings = normalizeAppSettings({
+      desktopCapsuleEnabled: true,
+      desktopCapsuleHidden: true,
+    })
+
+    expect(settings.desktopCapsuleEnabled).toBe(true)
+    expect(settings.desktopCapsuleHidden).toBe(true)
+  })
+
   it('does not allow realtime-only providers as AI Notes providers', () => {
     const settings = normalizeAppSettings({
       aiProvider: 'doubao',
