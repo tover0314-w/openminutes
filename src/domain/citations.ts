@@ -9,7 +9,9 @@ export interface HumanNoteSource {
   id: string
   label: string
   text: string
+  rawText: string
   index: number
+  lineIndex: number
 }
 
 export interface HumanNoteCitation {
@@ -52,16 +54,24 @@ export function findTranscriptCitations(
 }
 
 export function getHumanNoteSources(manualNotes: string): HumanNoteSource[] {
-  return manualNotes
-    .split('\n')
-    .map((line) => line.trim())
-    .filter((line) => isHumanNoteSourceLine(line))
-    .map((line, index) => ({
+  const sources: HumanNoteSource[] = []
+
+  manualNotes.split('\n').forEach((rawLine, lineIndex) => {
+    const line = rawLine.trim()
+    if (!isHumanNoteSourceLine(line)) return
+
+    const index = sources.length
+    sources.push({
       id: `human-note-${index + 1}`,
       label: `H${index + 1}`,
       text: normalizeHumanNoteLine(line),
+      rawText: rawLine,
       index,
-    }))
+      lineIndex,
+    })
+  })
+
+  return sources
 }
 
 export function findHumanNoteCitations(

@@ -37,10 +37,15 @@ describe('App', () => {
     await user.click(within(nav).getByRole('button', { name: /^meeting$/i }))
     await user.click(screen.getByRole('button', { name: /stop recording from meeting/i }))
 
-    await user.click(screen.getByRole('button', { name: /human note/i }))
+    expect(screen.queryByRole('button', { name: /human note/i })).not.toBeInTheDocument()
+
+    const humanCitation = screen.getAllByRole('button').find((button) => /\[H\d+\]/.test(button.textContent ?? ''))
+    expect(humanCitation).toBeDefined()
+    await user.click(humanCitation as HTMLElement)
 
     expect(screen.getByText(/ship macos-first/i)).toBeInTheDocument()
     expect(screen.getByText(/prototype desktop token-compatible ui/i)).toBeInTheDocument()
+    expect(screen.getByLabelText(/human note text/i).querySelector('.selected-source')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /back to review/i })).toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: /back to review/i }))
@@ -345,7 +350,7 @@ describe('App', () => {
     await user.click(humanCitation as HTMLElement)
 
     expect(screen.getByText(/right side is original transcript\/source/i)).toBeInTheDocument()
-    expect(screen.getByLabelText(/human note sources/i).querySelector('.selected-source')).toBeInTheDocument()
+    expect(screen.getByLabelText(/human note text/i).querySelector('.selected-source')).toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: /back to review/i }))
     const transcriptCitation = screen

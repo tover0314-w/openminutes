@@ -1064,7 +1064,6 @@ function MeetingPage({
               transcriptionError={transcriptionError}
               onRetryTranscriptImport={onRetryTranscriptImport}
               contextPreview={contextPreview}
-              onOpenManualSource={() => setReviewSource('manual')}
               onSelectCitation={selectReviewCitation}
               onUpdateAiNotes={onUpdateAiNotes}
               onDeleteRawAudio={onDeleteRawAudio}
@@ -1116,7 +1115,7 @@ function ManualNotesPane({
         }
       />
       {sourceMode ? (
-        <ManualSourceList
+        <ManualSourceText
           manualNotes={meeting.manualNotes}
           selectedHumanSourceId={selectedHumanSourceId}
         />
@@ -1147,44 +1146,50 @@ function ManualNotesPane({
   )
 }
 
-function ManualSourceList({
+function ManualSourceText({
   manualNotes,
   selectedHumanSourceId,
 }: {
   manualNotes: string
   selectedHumanSourceId?: string
 }) {
-  const selectedSourceRef = useRef<HTMLElement | null>(null)
+  const selectedSourceRef = useRef<HTMLParagraphElement | null>(null)
   const sources = getHumanNoteSources(manualNotes)
+  const sourceByLineIndex = new Map(sources.map((source) => [source.lineIndex, source]))
+  const lines = manualNotes.split('\n')
 
   useEffect(() => {
     selectedSourceRef.current?.scrollIntoView?.({ block: 'center', behavior: 'smooth' })
   }, [selectedHumanSourceId])
 
-  if (!sources.length) {
+  if (!manualNotes.trim()) {
     return (
-      <div className="manual-source-list">
-        <pre>{manualNotes.trim() || 'No human notes captured.'}</pre>
+      <div className="manual-source-text" aria-label="Human note text">
+        <p>No human notes captured.</p>
       </div>
     )
   }
 
   return (
-    <div className="manual-source-list" aria-label="Human note sources">
-      {sources.map((source) => (
-        <article
-          key={source.id}
-          ref={(node) => {
-            if (source.id === selectedHumanSourceId) selectedSourceRef.current = node
-          }}
-          className={`manual-source-item ${
-            source.id === selectedHumanSourceId ? 'selected-source' : ''
-          }`}
-        >
-          <span>{source.label}</span>
-          <p>{source.text}</p>
-        </article>
-      ))}
+    <div className="manual-source-text" aria-label="Human note text">
+      {lines.map((line, lineIndex) => {
+        const source = sourceByLineIndex.get(lineIndex)
+        const isSelected = source?.id === selectedHumanSourceId
+
+        return (
+          <p
+            key={`${lineIndex}-${line}`}
+            ref={(node) => {
+              if (isSelected) selectedSourceRef.current = node
+            }}
+            className={`manual-source-text-line ${isSelected ? 'selected-source' : ''} ${
+              line.trim() ? '' : 'empty-line'
+            }`}
+          >
+            {line}
+          </p>
+        )
+      })}
     </div>
   )
 }
@@ -1202,7 +1207,6 @@ function AiNotesPane({
   transcriptionError,
   onRetryTranscriptImport,
   contextPreview,
-  onOpenManualSource,
   onSelectCitation,
   onUpdateAiNotes,
   onDeleteRawAudio,
@@ -1219,7 +1223,6 @@ function AiNotesPane({
   transcriptionError: string
   onRetryTranscriptImport?: () => void | Promise<void>
   contextPreview: string
-  onOpenManualSource: () => void
   onSelectCitation: (citation: ReviewCitation) => void
   onUpdateAiNotes: (aiNotes: AiNotes) => void
   onDeleteRawAudio: () => void | Promise<void>
@@ -1292,11 +1295,7 @@ function AiNotesPane({
               <span>{generationErrorMessage}</span>
             </div>
           ) : null}
-          <ReviewReferenceBar
-            meeting={meeting}
-            onOpenManualSource={onOpenManualSource}
-            onDeleteRawAudio={onDeleteRawAudio}
-          />
+          <ReviewReferenceBar meeting={meeting} onDeleteRawAudio={onDeleteRawAudio} />
           {editing ? (
             <textarea
               className="review-document-textarea"
@@ -1319,11 +1318,7 @@ function AiNotesPane({
         </div>
       ) : (
         <div className="ai-notes" aria-label="AI Notes">
-          <ReviewReferenceBar
-            meeting={meeting}
-            onOpenManualSource={onOpenManualSource}
-            onDeleteRawAudio={onDeleteRawAudio}
-          />
+          <ReviewReferenceBar meeting={meeting} onDeleteRawAudio={onDeleteRawAudio} />
           <div className="empty-generation">
             <Sparkles size={22} />
             <h3>{emptyTitle}</h3>
@@ -1468,33 +1463,22 @@ function reviewCitationText(line: string): string {
 
 function ReviewReferenceBar({
   meeting,
-  onOpenManualSource,
   onDeleteRawAudio,
 }: {
   meeting: Meeting
-  onOpenManualSource: () => void
   onDeleteRawAudio: () => void | Promise<void>
 }) {
-  const manualNotes = meeting.manualNotes.trim()
   const rawAudio = meeting.rawAudio
-  const hasReferences = Boolean(manualNotes || rawAudio)
 
-  if (!hasReferences) return null
+  if (!rawAudio) return null
 
   return (
     <div className="review-reference-bar" aria-label="Review references">
-      {manualNotes ? (
-        <button className="review-citation-chip" onClick={onOpenManualSource}>
-          Human note<sup>1</sup>
-        </button>
-      ) : null}
-      {rawAudio ? (
-        <div className="review-raw-audio">
-          <strong>Raw audio</strong>
-          <span>{rawAudio.fileName} · {formatDurationMillis(rawAudio.durationMillis)}</span>
-          <button onClick={onDeleteRawAudio}>Delete Raw Audio</button>
-        </div>
-      ) : null}
+      <div className="review-raw-audio">
+        <strong>Raw audio</strong>
+        <span>{rawAudio.fileName} · {formatDurationMillis(rawAudio.durationMillis)}</span>
+        <button onClick={onDeleteRawAudio}>Delete Raw Audio</button>
+      </div>
     </div>
   )
 }

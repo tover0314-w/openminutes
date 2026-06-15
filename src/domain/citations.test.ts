@@ -21,6 +21,8 @@ describe('citation helpers', () => {
       'H7',
     ])
     expect(sources[1].text).toContain('Ship macOS-first')
+    expect(sources[1].lineIndex).toBe(2)
+    expect(sources[1].rawText).toContain('[Decision] Ship macOS-first')
   })
 
   it('matches AI text back to human note and transcript sources', () => {
