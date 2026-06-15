@@ -247,7 +247,7 @@ pub async fn stream_pcm_chunks<F>(
     mut on_text: F,
 ) -> Result<(), String>
 where
-    F: FnMut(String) + Send + 'static,
+    F: FnMut(String, bool) + Send + 'static,
 {
     let (stream, _) = connect_doubao_websocket(&config).await?;
     let (mut writer, mut reader) = stream.split();
@@ -284,6 +284,7 @@ where
                         &mut reader,
                         &mut emitted_lines,
                         &mut on_text,
+                        false,
                     )
                     .await?;
                 }
@@ -309,7 +310,7 @@ where
             let message =
                 message.map_err(|error| format!("Doubao realtime read failed: {error}"))?;
             let should_finish =
-                handle_server_message(message, &mut emitted_lines, &mut on_text)?;
+                handle_server_message(message, &mut emitted_lines, &mut on_text, true)?;
             if should_finish {
                 break;
             }
@@ -474,13 +475,14 @@ async fn drain_available_server_messages<F>(
     reader: &mut futures_util::stream::SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>,
     emitted_lines: &mut Vec<String>,
     on_text: &mut F,
+    final_phase: bool,
 ) -> Result<(), String>
 where
-    F: FnMut(String) + Send + 'static,
+    F: FnMut(String, bool) + Send + 'static,
 {
     while let Ok(Some(message)) = timeout(Duration::from_millis(1), reader.next()).await {
         let message = message.map_err(|error| format!("Doubao realtime read failed: {error}"))?;
-        let _ = handle_server_message(message, emitted_lines, on_text)?;
+        let _ = handle_server_message(message, emitted_lines, on_text, final_phase)?;
     }
 
     Ok(())
@@ -490,9 +492,10 @@ fn handle_server_message<F>(
     message: Message,
     emitted_lines: &mut Vec<String>,
     on_text: &mut F,
+    final_phase: bool,
 ) -> Result<bool, String>
 where
-    F: FnMut(String) + Send + 'static,
+    F: FnMut(String, bool) + Send + 'static,
 {
     match message {
         Message::Binary(bytes) => {
@@ -508,14 +511,24 @@ where
             if let Some(text) = server_message.text {
                 texts.push(text);
             }
-            emit_unique_lines(emitted_lines, texts, on_text);
+            emit_streaming_lines(emitted_lines, texts, on_text, final_phase);
 
             Ok(server_message.message_type == SERVER_FULL_RESPONSE && !emitted_lines.is_empty())
         }
         Message::Text(text) => {
             match serde_json::from_str::<Value>(&text) {
-                Ok(value) => emit_unique_lines(emitted_lines, extract_transcript_texts(&value), on_text),
-                Err(_) => emit_unique_lines(emitted_lines, vec![text.to_string()], on_text),
+                Ok(value) => emit_streaming_lines(
+                    emitted_lines,
+                    extract_transcript_texts(&value),
+                    on_text,
+                    final_phase,
+                ),
+                Err(_) => emit_streaming_lines(
+                    emitted_lines,
+                    vec![text.to_string()],
+                    on_text,
+                    final_phase,
+                ),
             }
             Ok(!emitted_lines.is_empty())
         }
@@ -524,18 +537,39 @@ where
     }
 }
 
-fn emit_unique_lines<F>(lines: &mut Vec<String>, texts: Vec<String>, on_text: &mut F)
-where
-    F: FnMut(String) + Send + 'static,
+fn emit_streaming_lines<F>(
+    lines: &mut Vec<String>,
+    texts: Vec<String>,
+    on_text: &mut F,
+    final_phase: bool,
+) where
+    F: FnMut(String, bool) + Send + 'static,
 {
     for text in texts {
         let text = text.trim();
-        if text.is_empty() || lines.iter().any(|line| line == text) {
+        if text.is_empty() || lines.last().is_some_and(|line| line == text) {
             continue;
         }
-        lines.push(text.to_string());
-        on_text(text.to_string());
+
+        if let Some(last_line) = lines.last_mut() {
+            if is_realtime_revision(last_line, text) {
+                *last_line = text.to_string();
+            } else {
+                lines.push(text.to_string());
+            }
+        } else {
+            lines.push(text.to_string());
+        }
+        on_text(text.to_string(), final_phase);
     }
+}
+
+fn is_realtime_revision(previous: &str, next: &str) -> bool {
+    let previous = previous.trim();
+    let next = next.trim();
+    !previous.is_empty()
+        && !next.is_empty()
+        && (next.starts_with(previous) || previous.starts_with(next))
 }
 
 fn append_i16_samples(output: &mut Vec<u8>, samples: &[i16]) {

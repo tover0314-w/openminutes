@@ -298,6 +298,10 @@ button {
   z-index: 2;
 }
 
+.pane-title {
+  min-width: 0;
+}
+
 .pane-title strong {
   display: block;
   font-size: 17px;
@@ -316,7 +320,8 @@ button {
   display: flex;
   gap: 6px;
   align-items: center;
-  flex-wrap: wrap;
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
   justify-content: flex-end;
 }
 

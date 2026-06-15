@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { App } from './App'
@@ -24,8 +24,28 @@ const captureMocks = vi.hoisted(() => {
   }
 })
 
+const realtimeMocks = vi.hoisted(() => {
+  const handlers: {
+    onLine?: Parameters<typeof import('./desktop/realtimeTranscript').listenRealtimeTranscript>[0]
+    onError?: Parameters<typeof import('./desktop/realtimeTranscript').listenRealtimeTranscript>[1]
+  } = {}
+
+  return {
+    handlers,
+    listen: vi.fn(async (onLine, onError) => {
+      handlers.onLine = onLine
+      handlers.onError = onError
+      return vi.fn()
+    }),
+  }
+})
+
 vi.mock('./desktop/audioCapture', () => ({
   createTauriAudioCaptureSession: captureMocks.create,
+}))
+
+vi.mock('./desktop/realtimeTranscript', () => ({
+  listenRealtimeTranscript: realtimeMocks.listen,
 }))
 
 vi.mock('./desktop/tauri', () => ({
@@ -41,6 +61,59 @@ describe('App native microphone capture', () => {
     captureMocks.status.mockClear()
     captureMocks.deleteFile.mockClear()
     captureMocks.create.mockClear()
+    realtimeMocks.listen.mockClear()
+    realtimeMocks.handlers.onLine = undefined
+    realtimeMocks.handlers.onError = undefined
+  })
+
+  it('replaces realtime partial transcript updates instead of appending every revision', async () => {
+    const user = userEvent.setup()
+    localStorage.setItem(
+      APP_SETTINGS_STORAGE_KEY,
+      JSON.stringify({
+        ...defaultAppSettings,
+        transcriptionMode: 'local-demo',
+        notesMode: 'local-demo',
+      }),
+    )
+
+    render(<App />)
+
+    await user.click(screen.getByRole('button', { name: /start meeting/i }))
+    await waitFor(() => {
+      expect(captureMocks.start).toHaveBeenCalled()
+    })
+    await waitFor(() => {
+      expect(realtimeMocks.handlers.onLine).toBeDefined()
+    })
+    const meetingId = String((captureMocks.start.mock.calls[0] as unknown[])[0])
+
+    await act(async () => {
+      realtimeMocks.handlers.onLine?.({
+        meetingId,
+        line: {
+          id: `${meetingId}-live-1`,
+          time: '00:03',
+          speaker: 'Speaker',
+          text: '我已经',
+          partial: true,
+        },
+      })
+      realtimeMocks.handlers.onLine?.({
+        meetingId,
+        line: {
+          id: `${meetingId}-live-1`,
+          time: '00:03',
+          speaker: 'Speaker',
+          text: '我已经把它打开了',
+          partial: true,
+        },
+      })
+    })
+
+    const transcriptPane = screen.getByRole('complementary', { name: /live transcript/i })
+    expect(within(transcriptPane).getByText(/我已经把它打开了/i)).toBeInTheDocument()
+    expect(within(transcriptPane).queryByText(/^Speaker: 我已经$/i)).not.toBeInTheDocument()
   })
 
   it('runs the desktop meeting flow from native capture through AI Notes and raw audio cleanup', async () => {

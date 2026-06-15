@@ -299,6 +299,7 @@ export function App() {
           })
           const baseMeeting = {
             ...meeting,
+            transcript: finalizeTranscriptLines(meeting.transcript),
             rawAudio: capturedAudio.retained
               ? {
                   path: capturedAudio.path,
@@ -345,7 +346,7 @@ export function App() {
     const demoSource = {
       ...meeting,
       phase: 'generating_ai_notes' as const,
-      transcript: meeting.transcript,
+      transcript: finalizeTranscriptLines(meeting.transcript),
     }
     setTranscriptionStatus('idle')
     setTranscriptionError('')
@@ -2450,6 +2451,10 @@ function upsertTranscriptLine(transcript: TranscriptLine[], line: TranscriptLine
   return [...transcript, line]
 }
 
+function finalizeTranscriptLines(transcript: TranscriptLine[]): TranscriptLine[] {
+  return transcript.map((line) => (line.partial ? { ...line, partial: false } : line))
+}
+
 function isNoActiveAudioCaptureError(error: unknown): boolean {
   return errorMessage(error).toLowerCase().includes('no active microphone recording')
 }
@@ -2885,6 +2890,7 @@ function formatTodayLabel(now = new Date()): string {
 }
 
 function statusLabel(phase: MeetingPhase, compact: boolean): string {
+  if (phase === 'recording') return 'Recording'
   if (phase === 'ready') return 'Ready'
   if (phase === 'needs_review') return compact ? 'Review' : 'Needs review'
   if (phase === 'draft') return 'Draft'

@@ -223,19 +223,25 @@ fn start_capture(
     let stream = match sample_format {
         SampleFormat::F32 => device.build_input_stream(
             &config,
-            move |data: &[f32], _| write_f32_samples(data, &writer_for_stream, &realtime_for_stream),
+            move |data: &[f32], _| {
+                write_f32_samples(data, &writer_for_stream, &realtime_for_stream)
+            },
             error_callback,
             None,
         ),
         SampleFormat::I16 => device.build_input_stream(
             &config,
-            move |data: &[i16], _| write_i16_samples(data, &writer_for_stream, &realtime_for_stream),
+            move |data: &[i16], _| {
+                write_i16_samples(data, &writer_for_stream, &realtime_for_stream)
+            },
             error_callback,
             None,
         ),
         SampleFormat::U16 => device.build_input_stream(
             &config,
-            move |data: &[u16], _| write_u16_samples(data, &writer_for_stream, &realtime_for_stream),
+            move |data: &[u16], _| {
+                write_u16_samples(data, &writer_for_stream, &realtime_for_stream)
+            },
             error_callback,
             None,
         ),
@@ -409,6 +415,9 @@ fn start_realtime_transcription(
     tauri::async_runtime::spawn(async move {
         let started_at = Instant::now();
         let mut line_index = 0usize;
+        let mut current_line_id = String::new();
+        let mut current_line_time = String::new();
+        let mut current_line_text = String::new();
         let doubao_config = doubao_realtime::DoubaoRealtimeConfig::new(config.api_key)
             .with_endpoint(config.endpoint)
             .with_resource_id(config.resource_id)
@@ -421,15 +430,27 @@ fn start_realtime_transcription(
             sample_rate,
             channels,
             receiver,
-            move |text| {
-                line_index += 1;
+            move |text, final_phase| {
+                let text = text.trim().to_string();
+                if text.is_empty() || text == current_line_text {
+                    return;
+                }
+
+                if current_line_id.is_empty() || !is_realtime_revision(&current_line_text, &text) {
+                    line_index += 1;
+                    current_line_id = format!("{}-live-{}", emit_meeting_id, line_index);
+                    current_line_time = format_clock_time(started_at.elapsed().as_millis() as u64);
+                }
+
+                current_line_text = text.clone();
                 let payload = RealtimeTranscriptPayload {
                     meeting_id: emit_meeting_id.clone(),
                     line: RealtimeTranscriptLine {
-                        id: format!("{}-live-{}", emit_meeting_id, line_index),
-                        time: format_clock_time(started_at.elapsed().as_millis() as u64),
+                        id: current_line_id.clone(),
+                        time: current_line_time.clone(),
                         speaker: "Speaker".to_string(),
                         text,
+                        partial: !final_phase,
                     },
                 };
                 let _ = emit_app.emit(REALTIME_TRANSCRIPT_EVENT, payload);
@@ -455,6 +476,14 @@ fn close_realtime_sender(sender: &SharedRealtimeSender) {
     if let Ok(mut guard) = sender.lock() {
         let _ = guard.take();
     }
+}
+
+fn is_realtime_revision(previous: &str, next: &str) -> bool {
+    let previous = previous.trim();
+    let next = next.trim();
+    !previous.is_empty()
+        && !next.is_empty()
+        && (next.starts_with(previous) || previous.starts_with(next))
 }
 
 fn write_f32_samples(input: &[f32], writer: &SharedWavWriter, realtime: &SharedRealtimeSender) {
@@ -514,6 +543,7 @@ struct RealtimeTranscriptLine {
     time: String,
     speaker: String,
     text: String,
+    partial: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -585,7 +615,8 @@ fn unix_seconds_now() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        capture_file_name, delete_retained_file_at, read_captured_audio_file, sanitize_capture_id,
+        capture_file_name, delete_retained_file_at, is_realtime_revision, read_captured_audio_file,
+        sanitize_capture_id,
     };
     use std::{fs, path::PathBuf};
 
@@ -600,6 +631,13 @@ mod tests {
             capture_file_name("product-sync-alex", 1_797_154_400),
             "recording-product-sync-alex-1797154400.wav"
         );
+    }
+
+    #[test]
+    fn detects_realtime_partial_revisions() {
+        assert!(is_realtime_revision("我已经", "我已经把它打开了"));
+        assert!(is_realtime_revision("hello there", "hello"));
+        assert!(!is_realtime_revision("我已经把它打开了", "但是新的句子"));
     }
 
     #[test]
