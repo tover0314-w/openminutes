@@ -497,7 +497,8 @@ describe('App', () => {
     await user.click(screen.getByRole('button', { name: /copy markdown/i }))
 
     expect(writeText).toHaveBeenCalledWith(expect.stringContaining('# Product sync with Alex'))
-    expect(writeText).toHaveBeenCalledWith(expect.stringContaining('## Review Brief'))
+    expect(writeText).toHaveBeenCalledWith(expect.stringContaining('## What Mattered'))
+    expect(writeText).not.toHaveBeenCalledWith(expect.stringContaining('## Decisions'))
     expect(writeText).toHaveBeenCalledWith(
       expect.stringContaining(
         '_Source: 12:04 Tov - In Review, the AI-generated notes should be the main content',

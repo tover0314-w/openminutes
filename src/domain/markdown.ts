@@ -26,44 +26,8 @@ export function formatMeetingMarkdown(
     return lines.join('\n').trimEnd()
   }
 
-  if (meeting.aiNotes.document?.trim()) {
-    lines.push('## Review Brief', '', meeting.aiNotes.document.trim(), '')
-
-    if (options.includeTranscript) {
-      lines.push('## Original Transcript', '', ...formatTranscript(meeting.transcript), '')
-    }
-
-    return lines.join('\n').trimEnd()
-  }
-
-  lines.push(
-    '## Review Brief',
-    '',
-    meeting.aiNotes.summary,
-    ...formatCitationBlock(findCitations(meeting, meeting.aiNotes.summary, includeCitations)),
-    '',
-    '## Next Steps',
-    '',
-    ...formatActionItems(meeting.aiNotes.actionItems, meeting, includeCitations),
-    '',
-    '## Decisions',
-    '',
-    ...formatList(meeting.aiNotes.decisions, meeting, includeCitations),
-    '',
-    '## Risks / Follow-ups',
-    '',
-    ...formatList(meeting.aiNotes.openQuestions, meeting, includeCitations),
-    '',
-    '## Important Context',
-    '',
-    ...formatList(meeting.aiNotes.keyPoints, meeting, includeCitations),
-    '',
-    '## Suggested Follow-up',
-    '',
-    meeting.aiNotes.followUpDraft,
-    ...formatCitationBlock(findCitations(meeting, meeting.aiNotes.followUpDraft, includeCitations)),
-    '',
-  )
+  const reviewDocument = meeting.aiNotes.document?.trim() || formatAiNotesDocument(meeting.aiNotes)
+  lines.push(...formatReviewDocumentWithCitations(reviewDocument, meeting, includeCitations), '')
 
   if (options.includeTranscript) {
     lines.push('## Original Transcript', '', ...formatTranscript(meeting.transcript), '')
@@ -73,44 +37,65 @@ export function formatMeetingMarkdown(
 }
 
 export function formatAiNotesDocument(notes: AiNotes): string {
+  if (notes.document?.trim()) return notes.document.trim()
+
+  const useChinese = containsCjk([
+    notes.summary,
+    ...notes.decisions,
+    ...notes.actionItems.map((item) => item.text),
+    ...notes.openQuestions,
+    ...notes.keyPoints,
+    notes.followUpDraft,
+  ].join('\n'))
+  const headings = useChinese
+    ? {
+        main: '## 这次真正重要的事',
+        details: '## 值得保留的细节',
+        next: '## 接下来',
+        followUp: '## 可以发送的跟进',
+        none: '暂时没有足够内容。',
+      }
+    : {
+        main: '## What Mattered',
+        details: '## Worth Keeping',
+        next: '## Next',
+        followUp: '## Follow-up Note',
+        none: 'Nothing concrete yet.',
+      }
+  const detailItems = [...notes.keyPoints, ...notes.decisions, ...notes.openQuestions]
+    .map((item) => item.trim())
+    .filter(Boolean)
+
   const lines = [
-    'Review Brief',
+    headings.main,
     '',
-    notes.summary.trim() || 'No summary yet.',
+    notes.summary.trim() || headings.none,
     '',
-    'Next Steps',
+    headings.details,
     '',
-    ...formatActionItemsForDocument(notes.actionItems),
+    ...formatStringListForDocument(detailItems, headings.none),
     '',
-    'Decisions',
+    headings.next,
     '',
-    ...formatStringListForDocument(notes.decisions),
+    ...formatActionItemsForDocument(notes.actionItems, headings.none),
     '',
-    'Risks / Follow-ups',
+    headings.followUp,
     '',
-    ...formatStringListForDocument(notes.openQuestions),
-    '',
-    'Important Context',
-    '',
-    ...formatStringListForDocument(notes.keyPoints),
-    '',
-    'Suggested Follow-up',
-    '',
-    notes.followUpDraft.trim() || 'No follow-up draft yet.',
+    notes.followUpDraft.trim() || headings.none,
   ]
 
   return lines.join('\n').trim()
 }
 
-function formatStringListForDocument(items: string[]): string[] {
+function formatStringListForDocument(items: string[], emptyText = 'None yet.'): string[] {
   const visibleItems = items.map((item) => item.trim()).filter(Boolean)
-  if (visibleItems.length === 0) return ['None yet.']
+  if (visibleItems.length === 0) return [emptyText]
   return visibleItems.map((item) => `- ${item}`)
 }
 
-function formatActionItemsForDocument(items: ActionItem[]): string[] {
+function formatActionItemsForDocument(items: ActionItem[], emptyText = 'None yet.'): string[] {
   const visibleItems = items.filter((item) => item.text.trim())
-  if (visibleItems.length === 0) return ['None yet.']
+  if (visibleItems.length === 0) return [emptyText]
 
   return visibleItems.map((item) => {
     const owner = item.owner ? ` (${item.owner})` : ''
@@ -119,30 +104,33 @@ function formatActionItemsForDocument(items: ActionItem[]): string[] {
   })
 }
 
-function formatList(items: string[], meeting: Meeting, includeCitations: boolean): string[] {
-  if (items.length === 0) return ['_None._']
-
-  return items.flatMap((item) => [
-    `- ${item}`,
-    ...formatNestedCitationBlock(findCitations(meeting, item, includeCitations)),
-  ])
+function containsCjk(value: string): boolean {
+  return /[\u3400-\u9fff]/.test(value)
 }
 
-function formatActionItems(
-  items: ActionItem[],
+function formatReviewDocumentWithCitations(
+  documentText: string,
   meeting: Meeting,
   includeCitations: boolean,
 ): string[] {
-  if (items.length === 0) return ['_None._']
+  return documentText.split('\n').flatMap((line) => {
+    const sourceText = citationTextForDocumentLine(line)
+    if (!sourceText) return [line]
 
-  return items.flatMap((item) => {
-    const owner = item.owner ? ` (${item.owner})` : ''
-    const due = item.due ? ` - due ${item.due}` : ''
-    return [
-      `- [ ] ${item.text}${owner}${due}`,
-      ...formatNestedCitationBlock(findCitations(meeting, item.text, includeCitations)),
-    ]
+    return [line, ...formatNestedCitationBlock(findCitations(meeting, sourceText, includeCitations))]
   })
+}
+
+function citationTextForDocumentLine(line: string): string {
+  const text = line
+    .trim()
+    .replace(/^#{1,6}\s+/, '')
+    .replace(/^[-*•]\s+/, '')
+    .replace(/^\[[ xX]\]\s+/, '')
+    .replace(/\*\*/g, '')
+    .trim()
+  if (!text || /^#{1,6}\s+/.test(line.trim())) return ''
+  return text.length >= 18 ? text : ''
 }
 
 function formatTranscript(transcript: TranscriptLine[]): string[] {

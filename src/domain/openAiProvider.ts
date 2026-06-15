@@ -73,8 +73,12 @@ export class OpenAICompatibleAiNotesProvider implements AiNotesProvider {
               'You are a sharp meeting reviewer, not a transcription formatter.',
               'Synthesize what the meeting actually produced, what is still unclear, and what should happen next.',
               'Use manual notes as high-priority human emphasis, then use the transcript as source evidence.',
+              'The user-facing result is the document field. It must read like a polished editable note, not a form, table, or rigid template.',
+              'Match the primary language of the meeting. If the meeting is mostly Chinese, write the document in Chinese. If manual notes use a different language, prefer the manual notes language.',
+              'Use light Markdown formatting in document: short paragraphs, optional natural ## headings, **bold** emphasis, and bullets only when they improve scanning.',
+              'Do not use document headings named Summary, Goal, Goals, Decisions, Action Items, Open Questions, Key Points, Suggested Follow-up, or Review Brief.',
               'Do not invent facts. If the meeting is thin, say what is missing.',
-              'Return only valid JSON with keys summary, decisions, actionItems, openQuestions, keyPoints, followUpDraft.',
+              'Return only valid JSON with keys document, summary, decisions, actionItems, openQuestions, keyPoints, followUpDraft.',
             ].join(' '),
           },
           {
@@ -138,6 +142,7 @@ export class OpenAICompatibleTranscriptionProvider implements TranscriptionProvi
 
 export function parseAiNotesJson(content: string): AiNotes {
   const parsed = JSON.parse(extractJson(content)) as Partial<AiNotes>
+  const document = typeof parsed.document === 'string' ? parsed.document.trim() : ''
 
   return {
     summary: stringOrDefault(parsed.summary, 'No summary generated.'),
@@ -146,6 +151,7 @@ export function parseAiNotesJson(content: string): AiNotes {
     openQuestions: stringListOrEmpty(parsed.openQuestions),
     keyPoints: stringListOrEmpty(parsed.keyPoints),
     followUpDraft: stringOrDefault(parsed.followUpDraft, ''),
+    document: document || undefined,
   }
 }
 
@@ -184,8 +190,17 @@ function buildPrompt(meeting: Meeting, context: string): string {
     `Meeting title: ${meeting.title}`,
     '',
     'Write a useful Review result, not generic meeting notes.',
+    'The document field is what the user reads and edits. It should feel like a human-written meeting review, with useful typography but without fixed business-template sections.',
+    'Use the same primary language as the meeting content. For long Chinese conversations, write the document in Chinese.',
     '',
-    'Field guidance:',
+    'Document guidance:',
+    '- Write 3-8 concise paragraphs or short bullets depending on the material.',
+    '- Use **bold** only for the most important conclusion, risk, or user-emphasized point.',
+    '- You may use 1-3 natural ## headings, but they must be specific to this meeting, not generic labels.',
+    '- Do not include headings like Summary, Goal, Decision, Decisions, Action Items, Open Questions, Key Points, Suggested Follow-up, or Review Brief.',
+    '- Do not output a table, key-value form, checklist template, or separate fields in the document.',
+    '',
+    'Internal field guidance:',
     '- summary: 2-4 sentences. Start with the real outcome or conclusion. Mention confidence and missing context when relevant.',
     '- decisions: only explicit decisions. If there was no decision, return an empty array.',
     '- actionItems: concrete next steps with owner and due date when present. Make the task text outcome-oriented. Leave owner/due empty when absent; never use TBD, unknown, or N/A.',
@@ -199,7 +214,7 @@ function buildPrompt(meeting: Meeting, context: string): string {
     '- Cite only information supported by the supplied context.',
     '',
     'Return JSON in this exact shape:',
-    '{"summary":"...","decisions":["..."],"actionItems":[{"id":"a1","text":"...","owner":"...","due":"..."}],"openQuestions":["..."],"keyPoints":["..."],"followUpDraft":"..."}',
+    '{"document":"...","summary":"...","decisions":["..."],"actionItems":[{"id":"a1","text":"...","owner":"...","due":"..."}],"openQuestions":["..."],"keyPoints":["..."],"followUpDraft":"..."}',
     '',
     context,
   ].join('\n')

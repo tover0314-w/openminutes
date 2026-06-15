@@ -581,6 +581,11 @@ button {
   text-indent: -14px;
 }
 
+.review-readable-document strong {
+  color: var(--color-text-primary);
+  font-weight: 760;
+}
+
 .review-readable-gap {
   height: 10px;
 }

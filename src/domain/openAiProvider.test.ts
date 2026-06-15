@@ -22,6 +22,7 @@ describe('OpenAICompatibleAiNotesProvider', () => {
           {
             message: {
               content: JSON.stringify({
+                document: '## What changed\n\n**This is the main readable note.**',
                 summary: 'Summary',
                 decisions: ['Decision'],
                 actionItems: [{ text: 'Do work', owner: 'Tov' }],
@@ -50,6 +51,7 @@ describe('OpenAICompatibleAiNotesProvider', () => {
     })
 
     expect(notes.summary).toBe('Summary')
+    expect(notes.document).toContain('## What changed')
     expect(notes.actionItems[0]).toMatchObject({ text: 'Do work', owner: 'Tov' })
     expect(fetcher).toHaveBeenCalledWith(
       'https://api.openai.com/v1/chat/completions',
@@ -59,12 +61,18 @@ describe('OpenAICompatibleAiNotesProvider', () => {
         }),
       }),
     )
+    const requestBody = JSON.parse(String(vi.mocked(fetcher).mock.calls[0]?.[1]?.body))
+    expect(requestBody.messages[0].content).toContain('Match the primary language of the meeting')
+    expect(requestBody.messages[0].content).toContain('document field')
+    expect(requestBody.messages[1].content).toContain('For long Chinese conversations, write the document in Chinese')
+    expect(requestBody.messages[1].content).toContain('Do not include headings like Summary, Goal, Decision')
   })
 
   it('parses JSON even when the provider wraps it in prose', () => {
-    const notes = parseAiNotesJson('Here:\n{"summary":"S","decisions":[],"actionItems":[],"openQuestions":[],"keyPoints":[],"followUpDraft":""}')
+    const notes = parseAiNotesJson('Here:\n{"document":"## 自然标题\\n\\n**重点**内容","summary":"S","decisions":[],"actionItems":[],"openQuestions":[],"keyPoints":[],"followUpDraft":""}')
 
     expect(notes.summary).toBe('S')
+    expect(notes.document).toBe('## 自然标题\n\n**重点**内容')
   })
 
   it('keeps action items when providers use common alternate field names', () => {

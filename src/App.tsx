@@ -1,4 +1,4 @@
-import { type ChangeEvent, useEffect, useMemo, useRef, useState } from 'react'
+import { type ChangeEvent, type ReactNode, useEffect, useMemo, useRef, useState } from 'react'
 import {
   BookOpen,
   CircleUser,
@@ -1474,15 +1474,6 @@ function AiNotesPane({
   )
 }
 
-const reviewDocumentHeadings = new Set([
-  'Review Brief',
-  'Next Steps',
-  'Decisions',
-  'Risks / Follow-ups',
-  'Important Context',
-  'Suggested Follow-up',
-])
-
 function ReviewReadableDocument({
   documentText,
   meeting,
@@ -1503,8 +1494,9 @@ function ReviewReadableDocument({
 
         if (!trimmedLine) return <div key={`blank-${index}`} className="review-readable-gap" />
 
-        if (reviewDocumentHeadings.has(trimmedLine)) {
-          return <h3 key={`heading-${index}`}>{trimmedLine}</h3>
+        const heading = reviewHeadingText(trimmedLine)
+        if (heading) {
+          return <h3 key={`heading-${index}`}>{renderReviewInlineText(heading)}</h3>
         }
 
         const citableText = reviewCitationText(trimmedLine)
@@ -1522,7 +1514,7 @@ function ReviewReadableDocument({
             key={`line-${index}`}
             className={`review-readable-line ${isReviewBulletLine(trimmedLine) ? 'bullet' : ''}`}
           >
-            <span>{trimmedLine}</span>
+            <span>{renderReviewInlineText(trimmedLine)}</span>
             <ReviewCitationChips citations={citations} onSelectCitation={onSelectCitation} />
           </p>
         )
@@ -1557,16 +1549,39 @@ function ReviewCitationChips({
 }
 
 function isCitableReviewLine(line: string): boolean {
-  const text = reviewCitationText(line.trim())
-  return text.length >= 18 && !reviewDocumentHeadings.has(text)
+  const trimmedLine = line.trim()
+  if (reviewHeadingText(trimmedLine)) return false
+
+  const text = reviewCitationText(trimmedLine)
+  return text.length >= 18
 }
 
 function isReviewBulletLine(line: string): boolean {
-  return /^[-*]\s+/.test(line)
+  return /^[-*•]\s+/.test(line) || /^\[[ xX]\]\s+/.test(line)
 }
 
 function reviewCitationText(line: string): string {
-  return line.replace(/^[-*]\s+/, '').replace(/^\[[ xX]\]\s+/, '').trim()
+  return line
+    .replace(/^#{1,6}\s+/, '')
+    .replace(/^[-*•]\s+/, '')
+    .replace(/^\[[ xX]\]\s+/, '')
+    .replace(/\*\*/g, '')
+    .trim()
+}
+
+function reviewHeadingText(line: string): string | undefined {
+  const match = /^#{2,3}\s+(.+)$/.exec(line)
+  return match?.[1]?.trim() || undefined
+}
+
+function renderReviewInlineText(text: string): ReactNode[] {
+  return text.split(/(\*\*[^*]+\*\*)/g).map((part, index) => {
+    if (part.startsWith('**') && part.endsWith('**') && part.length > 4) {
+      return <strong key={`strong-${index}`}>{part.slice(2, -2)}</strong>
+    }
+
+    return part
+  })
 }
 
 function ReviewReferenceBar({
