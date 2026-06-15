@@ -18,6 +18,8 @@ use tokio_tungstenite::{
 use uuid::Uuid;
 
 pub const DEFAULT_DOUBAO_REALTIME_ENDPOINT: &str =
+    "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_async";
+pub const DEFAULT_DOUBAO_BATCH_ENDPOINT: &str =
     "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_nostream";
 pub const DEFAULT_DOUBAO_REALTIME_RESOURCE_ID: &str = "volc.seedasr.sauc.duration";
 pub const DEFAULT_DOUBAO_REALTIME_MODEL: &str = "bigmodel";
@@ -267,7 +269,6 @@ where
         .map_err(|error| format!("Could not send Doubao realtime session request: {error}"))?;
 
     let mut pcm_buffer = Vec::<u8>::new();
-    let mut pending_audio_chunk: Option<Vec<u8>> = None;
     let mut emitted_lines = Vec::<String>::new();
     let mut input_closed = false;
     let mut final_sent = false;
@@ -278,15 +279,13 @@ where
                 append_i16_samples(&mut pcm_buffer, &samples);
                 while pcm_buffer.len() >= AUDIO_CHUNK_BYTES {
                     let next_chunk = pcm_buffer.drain(..AUDIO_CHUNK_BYTES).collect::<Vec<_>>();
-                    if let Some(previous) = pending_audio_chunk.replace(next_chunk) {
-                        send_audio_chunk(&mut writer, &previous, false).await?;
-                        drain_available_server_messages(
-                            &mut reader,
-                            &mut emitted_lines,
-                            &mut on_text,
-                        )
-                        .await?;
-                    }
+                    send_audio_chunk(&mut writer, &next_chunk, false).await?;
+                    drain_available_server_messages(
+                        &mut reader,
+                        &mut emitted_lines,
+                        &mut on_text,
+                    )
+                    .await?;
                 }
             }
             None => {
@@ -296,13 +295,7 @@ where
 
         if input_closed {
             if !pcm_buffer.is_empty() {
-                if let Some(previous) = pending_audio_chunk.take() {
-                    send_audio_chunk(&mut writer, &previous, false).await?;
-                }
-                pending_audio_chunk = Some(std::mem::take(&mut pcm_buffer));
-            }
-
-            if let Some(last_chunk) = pending_audio_chunk.take() {
+                let last_chunk = std::mem::take(&mut pcm_buffer);
                 send_audio_chunk(&mut writer, &last_chunk, true).await?;
             } else {
                 send_audio_chunk(&mut writer, &[], true).await?;

@@ -14,7 +14,7 @@ import {
   type MeetingPhase,
   type TranscriptLine,
   buildAiNotesContext,
-  createDemoMeeting,
+  createDraftMeeting,
   getMeetingViewModel,
 } from './domain/meeting'
 import { type ApiKeyRepository, createMemoryApiKeyRepository } from './domain/apiKey'
@@ -99,10 +99,7 @@ const apiKeyProviders: Array<{ id: ApiProviderId; label: string }> = [
 ]
 
 const realtimeProviderOptions: Array<{ id: RealtimeTranscriptionProviderId; label: string }> = [
-  { id: 'openai-realtime', label: 'OpenAI RT' },
   { id: 'doubao-realtime', label: 'Doubao' },
-  { id: 'deepgram', label: 'Deepgram' },
-  { id: 'assemblyai', label: 'AssemblyAI' },
 ]
 
 const batchSttProviderOptions: Array<{ id: BatchTranscriptionProviderId; label: string }> = [
@@ -122,6 +119,7 @@ const aiNotesProviderOptions: Array<{ id: AppSettings['aiProvider']; label: stri
 
 const MEETING_GLOBAL_SHORTCUT = 'Alt+M'
 const MEETING_GLOBAL_SHORTCUT_LABEL = 'Option+M'
+const demoMeetingIds = new Set(['product-sync-alex', 'customer-acme', 'jamie-1on1', 'macos-audio'])
 
 const routeTitles: Record<Route, string> = {
   today: 'Today',
@@ -161,7 +159,7 @@ export function App() {
   const [settingsPane, setSettingsPane] = useState<SettingsPane>('general')
   const [appSettings, setAppSettings] = useState<AppSettings>(() => loadBrowserAppSettings())
   const [meeting, setMeeting] = useState<Meeting>(
-    () => meetingRepository.get('product-sync-alex') ?? createDemoMeeting('recording'),
+    () => latestRealMeeting(meetingRepository.list()) ?? createDraftMeeting(),
   )
   const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'ready'>('idle')
   const [exportStatus, setExportStatus] = useState<
@@ -212,12 +210,7 @@ export function App() {
   )
 
   const meetings = useMemo(
-    () => [
-      meeting,
-      createListMeeting('customer-acme', 'Customer call: Acme onboarding', 'needs_review'),
-      createListMeeting('jamie-1on1', '1:1 with Jamie', 'draft'),
-      createListMeeting('macos-audio', 'Bug triage: macOS audio', 'ready'),
-    ],
+    () => (isEmptyDraftMeeting(meeting) ? [] : [meeting]),
     [meeting],
   )
 
@@ -352,7 +345,7 @@ export function App() {
     const demoSource = {
       ...meeting,
       phase: 'generating_ai_notes' as const,
-      transcript: meeting.transcript.length ? meeting.transcript : createDemoMeeting('recording').transcript,
+      transcript: meeting.transcript,
     }
     setTranscriptionStatus('idle')
     setTranscriptionError('')
@@ -397,14 +390,10 @@ export function App() {
     const meetingId = `import-error-${Date.now()}`
     setRoute('meeting')
     setMeeting({
-      ...createDemoMeeting('error'),
+      ...createDraftMeeting(),
       id: meetingId,
       title: 'Audio import',
-      duration: '00:00',
-      manualNotes: '',
-      markers: [],
-      transcript: [],
-      aiNotes: undefined,
+      phase: 'error',
     })
     setTranscriptionStatus('error')
     setTranscriptionError(errorMessage(error))
@@ -424,15 +413,10 @@ export function App() {
           aiNotes: undefined,
         }
       : {
-          ...createDemoMeeting('finalizing_transcript'),
+          ...createDraftMeeting(),
           id: request.meetingId,
           title: request.title,
-          duration: '00:00',
           phase: 'finalizing_transcript',
-          manualNotes: '',
-          markers: [],
-          transcript: [],
-          aiNotes: undefined,
         }
 
     setRoute('meeting')
@@ -732,7 +716,7 @@ export function App() {
       setDesktopRepository(repository)
       setStorageMode('desktop')
 
-      const savedMeeting = await repository.get('product-sync-alex')
+      const savedMeeting = latestRealMeeting(await repository.list())
       if (!cancelled && savedMeeting) {
         setMeeting(savedMeeting)
       }
@@ -921,7 +905,12 @@ export function App() {
           </div>
         ) : null}
 
-        {route === 'today' && <TodayPage meetings={meetings} onOpenMeeting={() => setRoute('meeting')} />}
+        {route === 'today' && (
+          <TodayPage
+            meetings={meetings}
+            onOpenMeeting={() => setRoute('meeting')}
+          />
+        )}
         {route === 'meeting' && (
           <MeetingPage
             meeting={meeting}
@@ -1005,38 +994,48 @@ function TodayPage({
   meetings: Meeting[]
   onOpenMeeting: () => void
 }) {
+  const activeMeeting = meetings[0]
+
   return (
     <section className="content today-grid" aria-label="Today">
       <div className="pane jelly-card">
         <PaneHeader
           title="Today"
-          subtitle="June 14, 2026"
-          aside={<StatusLabel phase={meetings[0].phase} />}
+          subtitle={formatTodayLabel()}
+          aside={activeMeeting ? <StatusLabel phase={activeMeeting.phase} /> : null}
         />
         <div className="meeting-list">
-          {meetings.map((meeting) => (
-            <button
-              key={meeting.id}
-              className={`meeting-row ${meeting.id === meetings[0].id ? 'selected' : ''}`}
-              onClick={onOpenMeeting}
-            >
-              <time>{meeting.phase === 'recording' ? 'Live' : meeting.phase === 'ready' ? 'Ready' : '13:00'}</time>
-              <span className="meeting-copy">
-                <strong>{meeting.title}</strong>
-                <small>{meetingSubtitle(meeting)}</small>
-              </span>
-              <StatusLabel phase={meeting.phase} compact />
-            </button>
-          ))}
+          {meetings.length ? (
+            meetings.map((meeting) => (
+              <button
+                key={meeting.id}
+                className={`meeting-row ${meeting.id === activeMeeting?.id ? 'selected' : ''}`}
+                onClick={onOpenMeeting}
+              >
+                <time>{meeting.phase === 'recording' ? 'Live' : meeting.phase === 'ready' ? 'Ready' : '13:00'}</time>
+                <span className="meeting-copy">
+                  <strong>{meeting.title}</strong>
+                  <small>{meetingSubtitle(meeting)}</small>
+                </span>
+                <StatusLabel phase={meeting.phase} compact />
+              </button>
+            ))
+          ) : (
+            <div className="empty-list-state">
+              <strong>No meetings yet</strong>
+              <span>Start a meeting to capture live transcript and notes.</span>
+            </div>
+          )}
         </div>
       </div>
       <aside className="pane jelly-card">
         <PaneHeader title="Current Meeting" subtitle="Mic + system audio" />
         <div className="summary-card">
-          <h3>{meetings[0].title}</h3>
+          <h3>{activeMeeting?.title ?? 'Ready when you are'}</h3>
           <p>
-            Focus keeps attention on your key notes while the right panel captures the live
-            transcript. Review turns those notes and transcript into AI Notes after stop.
+            {activeMeeting
+              ? 'Focus keeps attention on your key notes while the right panel captures the live transcript. Review turns those notes and transcript into AI Notes after stop.'
+              : 'OpenMinutes will keep this screen empty until you start or import a real meeting.'}
           </p>
         </div>
       </aside>
@@ -1112,9 +1111,18 @@ function MeetingPage({
           <ManualNotesPane
             meeting={meeting}
             onUpdateManualNotes={onUpdateManualNotes}
-            onStopRecording={onStopRecording}
+            onStopRecording={view.canStop ? onStopRecording : undefined}
           />
-          <TranscriptPane title="Live Transcript" subtitle="Realtime STT while recording" meeting={meeting} live />
+          <TranscriptPane
+            title={meeting.phase === 'recording' ? 'Live Transcript' : 'Transcript'}
+            subtitle={
+              meeting.phase === 'recording'
+                ? 'Realtime STT while recording'
+                : 'Realtime transcript appears after you start'
+            }
+            meeting={meeting}
+            live={meeting.phase === 'recording'}
+          />
         </>
       ) : (
         <>
@@ -1185,7 +1193,9 @@ function ManualNotesPane({
       <PaneHeader
         title={meeting.title}
         subtitle={
-          sourceMode ? 'Focus source used by AI Notes' : 'Recording - Focus mode - Mic + system audio'
+          sourceMode
+            ? 'Focus source used by AI Notes'
+            : `${meeting.phase === 'recording' ? 'Recording' : 'Ready'} - Focus mode - Mic + system audio`
         }
         aside={
           <div className="status-row">
@@ -1219,13 +1229,13 @@ function ManualNotesPane({
         <div className="recording-action-bar">
           <button onClick={onBackToReview}>Back to Review</button>
         </div>
-      ) : (
+      ) : onStopRecording ? (
         <div className="recording-action-bar">
           <button className="stop-button" aria-label="Stop recording from meeting" onClick={onStopRecording}>
             Stop Recording
           </button>
         </div>
-      )}
+      ) : null}
     </div>
   )
 }
@@ -1417,7 +1427,7 @@ function AiNotesPane({
       ) : (
         <div className="ai-notes" aria-label="AI Notes">
           <ReviewReferenceBar meeting={meeting} onDeleteRawAudio={onDeleteRawAudio} />
-          <div className="empty-generation">
+          <div className={`empty-generation ${isGenerating || isImportingTranscript ? 'loading-generation' : ''}`}>
             <Sparkles size={22} />
             <h3>{emptyTitle}</h3>
             <p>{emptyCopy}</p>
@@ -1657,7 +1667,11 @@ function TranscriptPane({
 
   return (
     <aside className="pane jelly-card transcript-pane" aria-label={title}>
-      <PaneHeader title={title} subtitle={subtitle} aside={live ? <span className="chip">Live</span> : <span className="chip">Source</span>} />
+      <PaneHeader
+        title={title}
+        subtitle={subtitle}
+        aside={live ? <span className="chip">Live</span> : editable ? <span className="chip">Source</span> : null}
+      />
       {manualNotes !== undefined ? (
         <SourceNotesBlock manualNotes={manualNotes} selectedHumanSourceId={selectedHumanSourceId} />
       ) : null}
@@ -2830,12 +2844,29 @@ function ToggleRow({
   )
 }
 
-function createListMeeting(id: string, title: string, phase: MeetingPhase): Meeting {
-  return {
-    ...createDemoMeeting(phase),
-    id,
-    title,
-  }
+function latestRealMeeting(meetings: Meeting[]): Meeting | undefined {
+  return meetings.find((meeting) => !isSeedMeeting(meeting) && !isEmptyDraftMeeting(meeting))
+}
+
+function isSeedMeeting(meeting: Meeting): boolean {
+  return demoMeetingIds.has(meeting.id)
+}
+
+function isEmptyDraftMeeting(meeting: Meeting): boolean {
+  return (
+    meeting.phase === 'draft' &&
+    !meeting.manualNotes.trim() &&
+    !meeting.transcript.length &&
+    !meeting.aiNotes
+  )
+}
+
+function formatTodayLabel(now = new Date()): string {
+  return new Intl.DateTimeFormat('en', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  }).format(now)
 }
 
 function statusLabel(phase: MeetingPhase, compact: boolean): string {

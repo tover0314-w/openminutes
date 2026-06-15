@@ -120,11 +120,16 @@ async fn test_provider_connection(
 ) -> Result<ProviderConnectionTestResult, String> {
     if provider == "doubao" || provider == "doubao-realtime" {
         let api_key = load_provider_api_key_string("doubao")?;
+        let default_endpoint = if provider == "doubao-realtime" {
+            doubao_realtime::DEFAULT_DOUBAO_REALTIME_ENDPOINT
+        } else {
+            doubao_realtime::DEFAULT_DOUBAO_BATCH_ENDPOINT
+        };
         let endpoint = base_url
             .as_deref()
             .map(str::trim)
             .filter(|value| !value.is_empty())
-            .unwrap_or(doubao_realtime::DEFAULT_DOUBAO_REALTIME_ENDPOINT);
+            .unwrap_or(default_endpoint);
         let config = doubao_realtime::DoubaoRealtimeConfig::new(api_key).with_endpoint(endpoint);
 
         return Ok(match doubao_realtime::test_connection(config).await {
@@ -206,7 +211,8 @@ async fn transcribe_audio_with_doubao(
     fs::write(&temp_path, bytes)
         .map_err(|error| format!("Could not prepare Doubao audio file: {error}"))?;
 
-    let mut config = doubao_realtime::DoubaoRealtimeConfig::new(api_key);
+    let mut config = doubao_realtime::DoubaoRealtimeConfig::new(api_key)
+        .with_endpoint(doubao_realtime::DEFAULT_DOUBAO_BATCH_ENDPOINT);
     if let Some(model_name) = model_name
         .as_deref()
         .map(str::trim)

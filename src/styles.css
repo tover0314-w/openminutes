@@ -846,6 +846,23 @@ button {
   line-height: 20px;
 }
 
+.loading-generation svg {
+  animation: aiPulse 1.1s ease-in-out infinite;
+}
+
+@keyframes aiPulse {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 0.66;
+  }
+
+  50% {
+    transform: scale(1.08);
+    opacity: 1;
+  }
+}
+
 .generation-alert {
   width: 100%;
   max-width: 520px;
@@ -1168,6 +1185,25 @@ button {
   display: grid;
   align-content: start;
   gap: 6px;
+}
+
+.empty-list-state {
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 18px;
+  display: grid;
+  gap: 8px;
+}
+
+.empty-list-state strong {
+  color: var(--color-text-primary);
+  font-size: 14px;
+}
+
+.empty-list-state span {
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 17px;
 }
 
 .meeting-row {

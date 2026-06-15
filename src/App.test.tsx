@@ -1,8 +1,26 @@
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { App } from './App'
+import { createDemoMeeting, type Meeting, type MeetingPhase } from './domain/meeting'
 import { APP_SETTINGS_STORAGE_KEY, defaultAppSettings } from './domain/settings'
+import { MEETINGS_STORAGE_KEY } from './domain/storage'
+
+function seedDemoMeeting(phase: MeetingPhase = 'recording'): Meeting {
+  const meeting = {
+    ...createDemoMeeting(phase),
+    id: 'test-product-sync',
+  }
+  localStorage.setItem(
+    MEETINGS_STORAGE_KEY,
+    JSON.stringify({
+      version: 1,
+      savedAt: new Date().toISOString(),
+      meetings: [meeting],
+    }),
+  )
+  return meeting
+}
 
 describe('App', () => {
   it('shows Meeting as a single sidebar entry without a separate Focus nav item', () => {
@@ -13,8 +31,23 @@ describe('App', () => {
     expect(within(nav).queryByRole('button', { name: /^focus$/i })).not.toBeInTheDocument()
   })
 
+  it('opens without seeded demo Review content', async () => {
+    const user = userEvent.setup()
+    render(<App />)
+
+    expect(screen.getByText(/no meetings yet/i)).toBeInTheDocument()
+    expect(screen.queryByText(/product sync with alex/i)).not.toBeInTheDocument()
+    expect(screen.queryByLabelText(/^ai notes$/i)).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /^meeting$/i }))
+    expect(screen.getByRole('complementary', { name: /^transcript$/i })).toBeInTheDocument()
+    expect(screen.queryByText(/^live$/i)).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /stop recording from meeting/i })).not.toBeInTheDocument()
+  })
+
   it('shows live transcript while recording and AI Notes after stop', async () => {
     const user = userEvent.setup()
+    seedDemoMeeting('recording')
     render(<App />)
     const nav = screen.getByRole('navigation', { name: /main navigation/i })
 
@@ -31,6 +64,7 @@ describe('App', () => {
 
   it('links the Review document to the human note source', async () => {
     const user = userEvent.setup()
+    seedDemoMeeting('recording')
     render(<App />)
     const nav = screen.getByRole('navigation', { name: /main navigation/i })
 
@@ -127,6 +161,7 @@ describe('App', () => {
 
   it('shows a provider configuration error without clearing existing AI Notes', async () => {
     const user = userEvent.setup()
+    seedDemoMeeting('recording')
     render(<App />)
     const nav = screen.getByRole('navigation', { name: /main navigation/i })
 
@@ -148,6 +183,7 @@ describe('App', () => {
       configurable: true,
     })
 
+    seedDemoMeeting('recording')
     render(<App />)
     const nav = screen.getByRole('navigation', { name: /main navigation/i })
 
@@ -209,6 +245,10 @@ describe('App', () => {
   it('runs the provider-backed audio import to AI Notes flow with a configured OpenAI key', async () => {
     const user = userEvent.setup()
     const originalFetch = globalThis.fetch
+    let resolveChatResponse: ((response: Response) => void) | undefined
+    const chatResponse = new Promise<Response>((resolve) => {
+      resolveChatResponse = resolve
+    })
     const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = input.toString()
       if (url.endsWith('/audio/transcriptions')) {
@@ -225,28 +265,7 @@ describe('App', () => {
 
       if (url.endsWith('/chat/completions')) {
         expect(init?.body?.toString()).toContain('Provider transcript line.')
-        return new Response(
-          JSON.stringify({
-            choices: [
-              {
-                message: {
-                  content: JSON.stringify({
-                    summary: 'Provider generated summary.',
-                    decisions: ['Use provider path for real testing.'],
-                    actionItems: [{ id: 'a1', text: 'Compare cloud providers.' }],
-                    openQuestions: ['Which provider wins on latency?'],
-                    keyPoints: ['Provider transcript line was used as context.'],
-                    followUpDraft: 'Follow up with the provider benchmark.',
-                  }),
-                },
-              },
-            ],
-          }),
-          {
-            status: 200,
-            headers: { 'Content-Type': 'application/json' },
-          },
-        )
+        return chatResponse
       }
 
       throw new Error(`Unexpected fetch URL: ${url}`)
@@ -292,6 +311,36 @@ describe('App', () => {
         name: /sources/i,
       })
       expect(within(transcriptPane).getByText(/provider transcript line/i)).toBeInTheDocument()
+      expect(await screen.findByText(/writing ai notes/i)).toBeInTheDocument()
+      expect(screen.queryByLabelText(/ai notes readable document/i)).not.toBeInTheDocument()
+      expect(screen.queryByText(/provider generated summary/i)).not.toBeInTheDocument()
+
+      await act(async () => {
+        resolveChatResponse?.(
+          new Response(
+            JSON.stringify({
+              choices: [
+                {
+                  message: {
+                    content: JSON.stringify({
+                      summary: 'Provider generated summary.',
+                      decisions: ['Use provider path for real testing.'],
+                      actionItems: [{ id: 'a1', text: 'Compare cloud providers.' }],
+                      openQuestions: ['Which provider wins on latency?'],
+                      keyPoints: ['Provider transcript line was used as context.'],
+                      followUpDraft: 'Follow up with the provider benchmark.',
+                    }),
+                  },
+                },
+              ],
+            }),
+            {
+              status: 200,
+              headers: { 'Content-Type': 'application/json' },
+            },
+          ),
+        )
+      })
 
       expect(await screen.findByText(/provider generated summary/i)).toBeInTheDocument()
       expect(fetcher).toHaveBeenCalledWith(
@@ -320,6 +369,7 @@ describe('App', () => {
 
   it('uses edited original transcript lines in the AI generation context', async () => {
     const user = userEvent.setup()
+    seedDemoMeeting('recording')
     render(<App />)
     const nav = screen.getByRole('navigation', { name: /main navigation/i })
 
@@ -341,6 +391,7 @@ describe('App', () => {
 
   it('highlights Review sources from citation markers and can open the Focus source', async () => {
     const user = userEvent.setup()
+    seedDemoMeeting('recording')
     render(<App />)
     const nav = screen.getByRole('navigation', { name: /main navigation/i })
 
@@ -377,6 +428,7 @@ describe('App', () => {
 
   it('can add and delete original transcript lines in Review', async () => {
     const user = userEvent.setup()
+    seedDemoMeeting('recording')
     render(<App />)
     const nav = screen.getByRole('navigation', { name: /main navigation/i })
 
@@ -403,6 +455,7 @@ describe('App', () => {
 
   it('can rename and merge transcript speakers across Review source lines', async () => {
     const user = userEvent.setup()
+    seedDemoMeeting('recording')
     render(<App />)
     const nav = screen.getByRole('navigation', { name: /main navigation/i })
 
@@ -435,6 +488,7 @@ describe('App', () => {
       configurable: true,
     })
 
+    seedDemoMeeting('recording')
     render(<App />)
     const nav = screen.getByRole('navigation', { name: /main navigation/i })
 
@@ -460,6 +514,7 @@ describe('App', () => {
       configurable: true,
     })
 
+    seedDemoMeeting('recording')
     render(<App />)
 
     await user.click(screen.getByRole('button', { name: /settings/i }))

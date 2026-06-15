@@ -127,6 +127,22 @@ export function buildAiNotesContext(meeting: Meeting): string {
   ].join('\n')
 }
 
+export function createDraftMeeting(now = new Date()): Meeting {
+  return {
+    id: `draft-${now.getTime()}`,
+    title: 'New Meeting',
+    template: 'General meeting',
+    participants: [],
+    startedAt: now.toISOString(),
+    duration: '00:00',
+    phase: 'draft',
+    manualNotes: '',
+    markers: [],
+    transcript: [],
+    aiNotes: undefined,
+  }
+}
+
 export function createDemoMeeting(phase: MeetingPhase = 'recording'): Meeting {
   const aiNotes: AiNotes = {
     summary:
