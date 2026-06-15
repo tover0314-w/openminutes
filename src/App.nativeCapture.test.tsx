@@ -102,17 +102,18 @@ describe('App native microphone capture', () => {
       realtimeMocks.handlers.onLine?.({
         meetingId,
         line: {
-          id: `${meetingId}-live-1`,
-          time: '00:03',
-          speaker: 'Speaker',
-          text: '我已经把它打开了',
+          id: `${meetingId}-live-2`,
+          time: '00:17',
+          speaker: 'Speaker 2',
+          text: '我已经把它打开了。可是我现在在刷牙',
           partial: true,
         },
       })
     })
 
     const transcriptPane = screen.getByRole('complementary', { name: /live transcript/i })
-    expect(within(transcriptPane).getByText(/我已经把它打开了/i)).toBeInTheDocument()
+    expect(within(transcriptPane).getByText(/我已经把它打开了。可是我现在在刷牙/i)).toBeInTheDocument()
+    expect(within(transcriptPane).getByText(/Speaker 2:/i)).toBeInTheDocument()
     expect(within(transcriptPane).queryByText(/^Speaker: 我已经$/i)).not.toBeInTheDocument()
   })
 

@@ -101,6 +101,12 @@ struct WavPcmAudio {
     duration_millis: u64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TranscriptSegment {
+    text: String,
+    speaker: Option<String>,
+}
+
 #[derive(Debug)]
 struct ServerMessage {
     message_type: u8,
@@ -247,7 +253,7 @@ pub async fn stream_pcm_chunks<F>(
     mut on_text: F,
 ) -> Result<(), String>
 where
-    F: FnMut(String, bool) + Send + 'static,
+    F: FnMut(String, Option<String>, bool) + Send,
 {
     let (stream, _) = connect_doubao_websocket(&config).await?;
     let (mut writer, mut reader) = stream.split();
@@ -478,7 +484,7 @@ async fn drain_available_server_messages<F>(
     final_phase: bool,
 ) -> Result<(), String>
 where
-    F: FnMut(String, bool) + Send + 'static,
+    F: FnMut(String, Option<String>, bool) + Send,
 {
     while let Ok(Some(message)) = timeout(Duration::from_millis(1), reader.next()).await {
         let message = message.map_err(|error| format!("Doubao realtime read failed: {error}"))?;
@@ -495,7 +501,7 @@ fn handle_server_message<F>(
     final_phase: bool,
 ) -> Result<bool, String>
 where
-    F: FnMut(String, bool) + Send + 'static,
+    F: FnMut(String, Option<String>, bool) + Send,
 {
     match message {
         Message::Binary(bytes) => {
@@ -506,10 +512,13 @@ where
 
             let mut texts = Vec::new();
             if let Some(value) = server_message.json {
-                texts.extend(extract_transcript_texts(&value));
+                texts.extend(extract_transcript_segments(&value));
             }
             if let Some(text) = server_message.text {
-                texts.push(text);
+                texts.push(TranscriptSegment {
+                    text,
+                    speaker: None,
+                });
             }
             emit_streaming_lines(emitted_lines, texts, on_text, final_phase);
 
@@ -519,13 +528,16 @@ where
             match serde_json::from_str::<Value>(&text) {
                 Ok(value) => emit_streaming_lines(
                     emitted_lines,
-                    extract_transcript_texts(&value),
+                    extract_transcript_segments(&value),
                     on_text,
                     final_phase,
                 ),
                 Err(_) => emit_streaming_lines(
                     emitted_lines,
-                    vec![text.to_string()],
+                    vec![TranscriptSegment {
+                        text: text.to_string(),
+                        speaker: None,
+                    }],
                     on_text,
                     final_phase,
                 ),
@@ -539,37 +551,50 @@ where
 
 fn emit_streaming_lines<F>(
     lines: &mut Vec<String>,
-    texts: Vec<String>,
+    segments: Vec<TranscriptSegment>,
     on_text: &mut F,
     final_phase: bool,
 ) where
-    F: FnMut(String, bool) + Send + 'static,
+    F: FnMut(String, Option<String>, bool) + Send,
 {
-    for text in texts {
-        let text = text.trim();
+    for segment in segments {
+        let text = segment.text.trim();
         if text.is_empty() || lines.last().is_some_and(|line| line == text) {
             continue;
         }
 
-        if let Some(last_line) = lines.last_mut() {
-            if is_realtime_revision(last_line, text) {
+        if lines.is_empty() {
+            lines.push(text.to_string());
+        } else if lines
+            .last()
+            .is_some_and(|last_line| is_realtime_revision(last_line, text))
+        {
+            if let Some(last_line) = lines.last_mut() {
                 *last_line = text.to_string();
-            } else {
-                lines.push(text.to_string());
             }
+        } else if lines.iter().any(|line| is_realtime_revision(line, text)) {
+            continue;
         } else {
             lines.push(text.to_string());
         }
-        on_text(text.to_string(), final_phase);
+        on_text(text.to_string(), segment.speaker, final_phase);
     }
 }
 
 fn is_realtime_revision(previous: &str, next: &str) -> bool {
-    let previous = previous.trim();
-    let next = next.trim();
-    !previous.is_empty()
-        && !next.is_empty()
-        && (next.starts_with(previous) || previous.starts_with(next))
+    let previous = canonical_transcript_text(previous);
+    let next = canonical_transcript_text(next);
+    previous.len() >= 3
+        && next.len() >= 3
+        && (next.starts_with(&previous) || previous.starts_with(&next))
+}
+
+fn canonical_transcript_text(value: &str) -> String {
+    value
+        .chars()
+        .filter(|character| character.is_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect()
 }
 
 fn append_i16_samples(output: &mut Vec<u8>, samples: &[i16]) {
@@ -602,6 +627,7 @@ fn doubao_request_payload(
             "enable_ddc": true,
             "result_type": "full",
             "show_utterances": true,
+            "enable_speaker_info": true,
         }
     }))
     .map_err(|error| format!("Could not encode Doubao request payload: {error}"))
@@ -788,6 +814,19 @@ fn gzip_decompress(payload: &[u8]) -> Result<Vec<u8>, String> {
 }
 
 fn extract_transcript_texts(value: &Value) -> Vec<String> {
+    extract_transcript_segments(value)
+        .into_iter()
+        .map(|segment| segment.text)
+        .collect()
+}
+
+fn extract_transcript_segments(value: &Value) -> Vec<TranscriptSegment> {
+    let mut utterances = Vec::new();
+    collect_utterance_segments(value, &mut utterances);
+    if !utterances.is_empty() {
+        return utterances;
+    }
+
     if let Some(text) = first_text_at_paths(
         value,
         &[
@@ -798,17 +837,14 @@ fn extract_transcript_texts(value: &Value) -> Vec<String> {
             &["text"],
         ],
     ) {
-        return vec![text];
-    }
-
-    let mut utterances = Vec::new();
-    collect_utterance_texts(value, &mut utterances);
-    if !utterances.is_empty() {
-        return utterances;
+        return vec![TranscriptSegment {
+            text,
+            speaker: None,
+        }];
     }
 
     let mut texts = Vec::new();
-    collect_texts(value, &mut texts);
+    collect_text_segments(value, &mut texts);
     texts
 }
 
@@ -830,55 +866,94 @@ fn first_text_at_paths(value: &Value, paths: &[&[&str]]) -> Option<String> {
     None
 }
 
-fn collect_utterance_texts(value: &Value, texts: &mut Vec<String>) {
+fn collect_utterance_segments(value: &Value, segments: &mut Vec<TranscriptSegment>) {
     match value {
         Value::Object(object) => {
             for (key, value) in object {
                 if key == "utterances" {
-                    collect_direct_item_texts(value, texts);
+                    collect_direct_item_segments(value, segments);
                 } else {
-                    collect_utterance_texts(value, texts);
+                    collect_utterance_segments(value, segments);
                 }
             }
         }
         Value::Array(items) => {
             for item in items {
-                collect_utterance_texts(item, texts);
+                collect_utterance_segments(item, segments);
             }
         }
         _ => {}
     }
 }
 
-fn collect_direct_item_texts(value: &Value, texts: &mut Vec<String>) {
+fn collect_direct_item_segments(value: &Value, segments: &mut Vec<TranscriptSegment>) {
     if let Value::Array(items) = value {
         for item in items {
             if let Some(text) = item.get("text").and_then(Value::as_str) {
-                push_unique_line(texts, text.to_string());
+                push_unique_segment(
+                    segments,
+                    TranscriptSegment {
+                        text: text.to_string(),
+                        speaker: extract_speaker_label(item),
+                    },
+                );
             }
         }
     }
 }
 
-fn collect_texts(value: &Value, texts: &mut Vec<String>) {
+fn collect_text_segments(value: &Value, segments: &mut Vec<TranscriptSegment>) {
     match value {
         Value::Object(object) => {
             for (key, value) in object {
                 if key == "text" {
                     if let Some(text) = value.as_str() {
-                        push_unique_line(texts, text.to_string());
+                        push_unique_segment(
+                            segments,
+                            TranscriptSegment {
+                                text: text.to_string(),
+                                speaker: None,
+                            },
+                        );
                     }
                 }
-                collect_texts(value, texts);
+                collect_text_segments(value, segments);
             }
         }
         Value::Array(items) => {
             for item in items {
-                collect_texts(item, texts);
+                collect_text_segments(item, segments);
             }
         }
         _ => {}
     }
+}
+
+fn extract_speaker_label(value: &Value) -> Option<String> {
+    let raw = value
+        .get("additions")
+        .and_then(|additions| {
+            additions
+                .get("speaker")
+                .or_else(|| additions.get("speaker_id"))
+                .or_else(|| additions.get("speakerId"))
+        })
+        .or_else(|| value.get("speaker"))
+        .or_else(|| value.get("speaker_id"))
+        .or_else(|| value.get("speakerId"))?;
+
+    let label = raw
+        .as_str()
+        .map(str::trim)
+        .filter(|speaker| !speaker.is_empty())
+        .map(ToOwned::to_owned)
+        .or_else(|| raw.as_i64().map(|speaker| speaker.to_string()))?;
+
+    Some(if label.to_lowercase().starts_with("speaker") {
+        label
+    } else {
+        format!("Speaker {label}")
+    })
 }
 
 fn push_unique_lines(lines: &mut Vec<String>, incoming: Vec<String>) {
@@ -898,11 +973,28 @@ fn push_unique_line(lines: &mut Vec<String>, line: String) {
     lines.push(trimmed.to_string());
 }
 
+fn push_unique_segment(segments: &mut Vec<TranscriptSegment>, segment: TranscriptSegment) {
+    let trimmed = segment.text.trim();
+    if trimmed.is_empty() {
+        return;
+    }
+    if segments.iter().any(|existing| {
+        existing.text == trimmed && existing.speaker.as_deref() == segment.speaker.as_deref()
+    }) {
+        return;
+    }
+    segments.push(TranscriptSegment {
+        text: trimmed.to_string(),
+        speaker: segment.speaker,
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        build_frame, diagnostic_endpoint, extract_transcript_texts, gzip_compress,
-        parse_server_message, CLIENT_AUDIO_ONLY_REQUEST, FINAL_PACKET, GZIP_COMPRESSION,
+        build_frame, diagnostic_endpoint, emit_streaming_lines, extract_transcript_segments,
+        extract_transcript_texts, gzip_compress, is_realtime_revision, parse_server_message,
+        TranscriptSegment, CLIENT_AUDIO_ONLY_REQUEST, FINAL_PACKET, GZIP_COMPRESSION,
         JSON_SERIALIZATION, SERVER_FULL_RESPONSE,
     };
     use serde_json::json;
@@ -946,7 +1038,7 @@ mod tests {
     }
 
     #[test]
-    fn prefers_full_result_text_over_word_texts() {
+    fn prefers_utterance_texts_over_cumulative_full_text() {
         let value = json!({
             "result": {
                 "text": "full transcript",
@@ -963,7 +1055,7 @@ mod tests {
             }
         });
 
-        assert_eq!(extract_transcript_texts(&value), vec!["full transcript"]);
+        assert_eq!(extract_transcript_texts(&value), vec!["first", "second"]);
     }
 
     #[test]
@@ -979,6 +1071,77 @@ mod tests {
         });
 
         assert_eq!(extract_transcript_texts(&value), vec!["first", "second"]);
+    }
+
+    #[test]
+    fn prefers_utterance_segments_with_speakers_over_full_text() {
+        let value = json!({
+            "result": {
+                "text": "full cumulative transcript",
+                "utterances": [
+                    { "text": "first speaker line", "additions": { "speaker": "1" } },
+                    { "text": "second speaker line", "speaker_id": 2 }
+                ]
+            }
+        });
+
+        let segments = extract_transcript_segments(&value);
+
+        assert_eq!(segments[0].text, "first speaker line");
+        assert_eq!(segments[0].speaker.as_deref(), Some("Speaker 1"));
+        assert_eq!(segments[1].text, "second speaker line");
+        assert_eq!(segments[1].speaker.as_deref(), Some("Speaker 2"));
+    }
+
+    #[test]
+    fn treats_punctuation_only_changes_as_realtime_revisions() {
+        assert!(is_realtime_revision(
+            "来，有请第二位人士说话，可是我现在",
+            "来，有请第二位人士说话。可是我现在在刷牙"
+        ));
+    }
+
+    #[test]
+    fn skips_older_segments_when_stream_returns_cumulative_utterances() {
+        let mut lines = Vec::<String>::new();
+        let mut emitted = Vec::<String>::new();
+
+        emit_streaming_lines(
+            &mut lines,
+            vec![
+                TranscriptSegment {
+                    text: "第一句".to_string(),
+                    speaker: Some("Speaker 1".to_string()),
+                },
+                TranscriptSegment {
+                    text: "第二句".to_string(),
+                    speaker: Some("Speaker 2".to_string()),
+                },
+            ],
+            &mut |text, _speaker, _final_phase| emitted.push(text),
+            false,
+        );
+        emit_streaming_lines(
+            &mut lines,
+            vec![
+                TranscriptSegment {
+                    text: "第一句".to_string(),
+                    speaker: Some("Speaker 1".to_string()),
+                },
+                TranscriptSegment {
+                    text: "第二句".to_string(),
+                    speaker: Some("Speaker 2".to_string()),
+                },
+                TranscriptSegment {
+                    text: "第三句".to_string(),
+                    speaker: Some("Speaker 1".to_string()),
+                },
+            ],
+            &mut |text, _speaker, _final_phase| emitted.push(text),
+            false,
+        );
+
+        assert_eq!(emitted, vec!["第一句", "第二句", "第三句"]);
     }
 
     #[test]

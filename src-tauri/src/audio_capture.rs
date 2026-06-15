@@ -430,7 +430,7 @@ fn start_realtime_transcription(
             sample_rate,
             channels,
             receiver,
-            move |text, final_phase| {
+            move |text, speaker, final_phase| {
                 let text = text.trim().to_string();
                 if text.is_empty() || text == current_line_text {
                     return;
@@ -448,7 +448,7 @@ fn start_realtime_transcription(
                     line: RealtimeTranscriptLine {
                         id: current_line_id.clone(),
                         time: current_line_time.clone(),
-                        speaker: "Speaker".to_string(),
+                        speaker: format_realtime_speaker(speaker.as_deref()),
                         text,
                         partial: !final_phase,
                     },
@@ -479,11 +479,31 @@ fn close_realtime_sender(sender: &SharedRealtimeSender) {
 }
 
 fn is_realtime_revision(previous: &str, next: &str) -> bool {
-    let previous = previous.trim();
-    let next = next.trim();
-    !previous.is_empty()
-        && !next.is_empty()
-        && (next.starts_with(previous) || previous.starts_with(next))
+    let previous = canonical_transcript_text(previous);
+    let next = canonical_transcript_text(next);
+    previous.len() >= 3
+        && next.len() >= 3
+        && (next.starts_with(&previous) || previous.starts_with(&next))
+}
+
+fn canonical_transcript_text(value: &str) -> String {
+    value
+        .chars()
+        .filter(|character| character.is_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+fn format_realtime_speaker(speaker: Option<&str>) -> String {
+    let Some(speaker) = speaker.map(str::trim).filter(|value| !value.is_empty()) else {
+        return "Speaker".to_string();
+    };
+
+    if speaker.to_lowercase().starts_with("speaker") {
+        speaker.to_string()
+    } else {
+        format!("Speaker {speaker}")
+    }
 }
 
 fn write_f32_samples(input: &[f32], writer: &SharedWavWriter, realtime: &SharedRealtimeSender) {
@@ -636,6 +656,10 @@ mod tests {
     #[test]
     fn detects_realtime_partial_revisions() {
         assert!(is_realtime_revision("我已经", "我已经把它打开了"));
+        assert!(is_realtime_revision(
+            "来，有请第二位人士说话，可是我现在",
+            "来，有请第二位人士说话。可是我现在在刷牙"
+        ));
         assert!(is_realtime_revision("hello there", "hello"));
         assert!(!is_realtime_revision("我已经把它打开了", "但是新的句子"));
     }

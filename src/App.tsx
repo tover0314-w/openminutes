@@ -2444,11 +2444,56 @@ function upsertTranscriptLine(transcript: TranscriptLine[], line: TranscriptLine
     return transcript.map((existing, index) => (index === existingIndex ? line : existing))
   }
 
+  const revisionIndex = findTranscriptRevisionIndex(transcript, line)
+  if (revisionIndex >= 0) {
+    return transcript.map((existing, index) =>
+      index === revisionIndex
+        ? {
+            ...existing,
+            speaker: line.speaker || existing.speaker,
+            text: longerTranscriptText(existing.text, line.text),
+            partial: line.partial,
+          }
+        : existing,
+    )
+  }
+
   if (transcript.some((existing) => existing.text.trim() === line.text.trim() && existing.text.trim())) {
     return transcript
   }
 
   return [...transcript, line]
+}
+
+function findTranscriptRevisionIndex(transcript: TranscriptLine[], line: TranscriptLine): number {
+  for (let index = transcript.length - 1; index >= 0; index -= 1) {
+    const existing = transcript[index]
+    if ((existing.partial || line.partial) && isTranscriptRevision(existing.text, line.text)) {
+      return index
+    }
+  }
+
+  return -1
+}
+
+function isTranscriptRevision(previous: string, next: string): boolean {
+  const previousText = canonicalTranscriptText(previous)
+  const nextText = canonicalTranscriptText(next)
+  return (
+    previousText.length >= 3 &&
+    nextText.length >= 3 &&
+    (nextText.startsWith(previousText) || previousText.startsWith(nextText))
+  )
+}
+
+function canonicalTranscriptText(value: string): string {
+  return Array.from(value.toLowerCase())
+    .filter((character) => /[\p{Letter}\p{Number}]/u.test(character))
+    .join('')
+}
+
+function longerTranscriptText(left: string, right: string): string {
+  return canonicalTranscriptText(right).length >= canonicalTranscriptText(left).length ? right : left
 }
 
 function finalizeTranscriptLines(transcript: TranscriptLine[]): TranscriptLine[] {
