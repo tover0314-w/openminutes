@@ -212,6 +212,19 @@ export function App() {
     setAppSettings((current) => ({ ...current, ...patch }))
   }
 
+  const resolveApiKeyRepository = async (): Promise<ApiKeyRepository> => {
+    if (isTauriRuntime()) {
+      const repository = await createTauriApiKeyRepository()
+      if (repository) {
+        setApiKeyRepository(repository)
+        setStorageMode('desktop')
+        return repository
+      }
+    }
+
+    return apiKeyRepository
+  }
+
   const startMeeting = async () => {
     const recordingMeeting = createRecordingMeeting()
     setMeeting(recordingMeeting)
@@ -226,7 +239,7 @@ export function App() {
       const captureSession = await createTauriAudioCaptureSession()
       await captureSession?.start(
         recordingMeeting.id,
-        await realtimeCaptureOptions(appSettings, apiKeyRepository),
+        await realtimeCaptureOptions(appSettings, await resolveApiKeyRepository()),
       )
     } catch (error) {
       setMeeting((current) =>
@@ -402,7 +415,7 @@ export function App() {
     setAiGenerationError('')
 
     try {
-      const provider = createTranscriptionProvider(appSettings, apiKeyRepository)
+      const provider = createTranscriptionProvider(appSettings, await resolveApiKeyRepository())
       const transcript = await provider.transcribe({
         meetingId: request.meetingId,
         audioUri: request.file.name,
@@ -451,7 +464,7 @@ export function App() {
     try {
       const provider = createAiNotesProvider(
         options.localDemoFallback ? { ...appSettings, notesMode: 'local-demo' } : appSettings,
-        apiKeyRepository,
+        await resolveApiKeyRepository(),
       )
       const generatedMeeting = await generateAiNotesForMeeting(provider, generatingMeeting)
       setMeeting(generatedMeeting)
@@ -480,7 +493,8 @@ export function App() {
     setApiKeyProvider(provider)
 
     try {
-      await apiKeyRepository.save(provider, draft)
+      const repository = await resolveApiKeyRepository()
+      await repository.save(provider, draft)
       setApiKeyDraft('')
       setApiKeyConfiguredByProvider((current) => ({
         ...current,
@@ -781,15 +795,20 @@ export function App() {
     let cancelled = false
     const providers = apiKeyProviders.map((provider) => provider.id)
 
-    Promise.all(
+    Promise.allSettled(
       providers.map(async (provider) => [provider, await apiKeyRepository.has(provider)] as const),
     )
       .then((entries) => {
         if (cancelled) return
-        setApiKeyConfiguredByProvider(Object.fromEntries(entries) as ApiKeyConfiguredMap)
-      })
-      .catch(() => {
-        if (!cancelled) setApiKeyConfiguredByProvider({})
+        setApiKeyConfiguredByProvider(
+          Object.fromEntries(
+            entries
+              .filter((entry): entry is PromiseFulfilledResult<readonly [ApiProviderId, boolean]> =>
+                entry.status === 'fulfilled',
+              )
+              .map((entry) => entry.value),
+          ) as ApiKeyConfiguredMap,
+        )
       })
 
     return () => {
