@@ -10,8 +10,7 @@ use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
 use serde::Serialize;
 use serde_json::Value;
 use std::{
-    env,
-    fs,
+    env, fs,
     path::{Path, PathBuf},
     time::Duration,
 };
@@ -86,20 +85,12 @@ fn save_app_settings(app: AppHandle, settings: Value) -> Result<(), String> {
 
 #[tauri::command]
 fn has_provider_api_key(provider: String) -> Result<bool, String> {
-    match provider_key_entry(&provider)?.get_password() {
-        Ok(api_key) => Ok(!api_key.trim().is_empty()),
-        Err(KeyringError::NoEntry) => Ok(load_provider_api_key_from_env(&provider).is_some()),
-        Err(error) => Err(format!("Could not read API key status: {error}")),
-    }
+    Ok(load_provider_api_key_secret(&provider)?.is_some())
 }
 
 #[tauri::command]
 fn load_provider_api_key(provider: String) -> Result<Option<String>, String> {
-    match provider_key_entry(&provider)?.get_password() {
-        Ok(api_key) => Ok(Some(api_key)),
-        Err(KeyringError::NoEntry) => Ok(load_provider_api_key_from_env(&provider)),
-        Err(error) => Err(format!("Could not load API key: {error}")),
-    }
+    load_provider_api_key_secret(&provider)
 }
 
 #[tauri::command]
@@ -365,20 +356,40 @@ fn provider_key_entry(provider: &str) -> Result<Entry, String> {
 }
 
 fn load_provider_api_key_string(provider: &str) -> Result<String, String> {
+    load_provider_api_key_secret(provider)?
+        .ok_or_else(|| format!("{} API key is not configured.", provider_label(provider)))
+}
+
+fn load_provider_api_key_secret(provider: &str) -> Result<Option<String>, String> {
     match provider_key_entry(provider)?.get_password() {
-        Ok(api_key) if !api_key.trim().is_empty() => Ok(api_key),
-        Ok(_) | Err(KeyringError::NoEntry) => load_provider_api_key_from_env(provider).ok_or_else(|| {
-            format!("{} API key is not configured.", provider_label(provider))
-        }),
-        Err(error) => Err(format!("Could not load API key: {error}")),
+        Ok(api_key) => {
+            if let Some(api_key) = normalize_loaded_api_key(&api_key) {
+                Ok(Some(api_key))
+            } else {
+                Ok(load_provider_api_key_from_fallbacks(provider))
+            }
+        }
+        Err(KeyringError::NoEntry) => Ok(load_provider_api_key_from_fallbacks(provider)),
+        Err(error) => {
+            if let Some(api_key) = load_provider_api_key_from_fallbacks(provider) {
+                Ok(Some(api_key))
+            } else {
+                Err(format!("Could not load API key: {error}"))
+            }
+        }
     }
+}
+
+fn load_provider_api_key_from_fallbacks(provider: &str) -> Option<String> {
+    load_provider_api_key_from_env(provider)
+        .or_else(|| load_provider_api_key_from_macos_keychain(provider))
 }
 
 fn load_provider_api_key_from_env(provider: &str) -> Option<String> {
     for key in provider_env_key_candidates(provider) {
         if let Ok(value) = env::var(key) {
-            if !value.trim().is_empty() {
-                return Some(value.trim().to_string());
+            if let Some(api_key) = normalize_loaded_api_key(&value) {
+                return Some(api_key);
             }
         }
     }
@@ -398,14 +409,51 @@ fn load_provider_api_key_from_env(provider: &str) -> Option<String> {
                     .any(|candidate| *candidate == key.trim())
                 {
                     let value = value.trim().trim_matches('"').trim_matches('\'');
-                    if !value.is_empty() {
-                        return Some(value.to_string());
+                    if let Some(api_key) = normalize_loaded_api_key(value) {
+                        return Some(api_key);
                     }
                 }
             }
         }
     }
 
+    None
+}
+
+fn normalize_loaded_api_key(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn load_provider_api_key_from_macos_keychain(provider: &str) -> Option<String> {
+    let output = std::process::Command::new("security")
+        .args([
+            "find-generic-password",
+            "-s",
+            KEYCHAIN_SERVICE,
+            "-a",
+            &provider_key_account(provider),
+            "-w",
+        ])
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    String::from_utf8(output.stdout)
+        .ok()
+        .and_then(|value| normalize_loaded_api_key(&value))
+}
+
+#[cfg(not(target_os = "macos"))]
+fn load_provider_api_key_from_macos_keychain(_provider: &str) -> Option<String> {
     None
 }
 
@@ -662,8 +710,8 @@ fn unique_markdown_path(export_dir: &Path, file_stem: &str) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::{
-        audio_mime_type, normalize_base_url, provider_connection_plan, provider_key_account,
-        sanitize_file_stem, ProviderAuthScheme,
+        audio_mime_type, normalize_base_url, normalize_loaded_api_key, provider_connection_plan,
+        provider_key_account, sanitize_file_stem, ProviderAuthScheme,
     };
     use std::path::Path;
 
@@ -687,6 +735,15 @@ mod tests {
             provider_key_account("bad/provider"),
             "provider:bad_provider"
         );
+    }
+
+    #[test]
+    fn normalizes_loaded_api_keys() {
+        assert_eq!(
+            normalize_loaded_api_key("  test-key\n"),
+            Some("test-key".to_string())
+        );
+        assert_eq!(normalize_loaded_api_key("   "), None);
     }
 
     #[test]
