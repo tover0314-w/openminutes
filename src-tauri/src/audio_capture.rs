@@ -6,6 +6,7 @@ use cpal::{
 use hound::{SampleFormat as WavSampleFormat, WavSpec, WavWriter};
 use serde::Serialize;
 use std::{
+    collections::HashMap,
     fs::{self, File},
     io::BufWriter,
     path::{Path, PathBuf},
@@ -418,6 +419,7 @@ fn start_realtime_transcription(
         let mut current_line_id = String::new();
         let mut current_line_time = String::new();
         let mut current_line_text = String::new();
+        let mut speaker_labels = RealtimeSpeakerLabels::default();
         let doubao_config = doubao_realtime::DoubaoRealtimeConfig::new(config.api_key)
             .with_endpoint(config.endpoint)
             .with_resource_id(config.resource_id)
@@ -448,7 +450,7 @@ fn start_realtime_transcription(
                     line: RealtimeTranscriptLine {
                         id: current_line_id.clone(),
                         time: current_line_time.clone(),
-                        speaker: format_realtime_speaker(speaker.as_deref()),
+                        speaker: speaker_labels.label(speaker.as_deref()),
                         text,
                         partial: !final_phase,
                     },
@@ -494,16 +496,45 @@ fn canonical_transcript_text(value: &str) -> String {
         .collect()
 }
 
-fn format_realtime_speaker(speaker: Option<&str>) -> String {
-    let Some(speaker) = speaker.map(str::trim).filter(|value| !value.is_empty()) else {
-        return "Speaker".to_string();
-    };
+#[derive(Default)]
+struct RealtimeSpeakerLabels {
+    labels: HashMap<String, String>,
+}
 
-    if speaker.to_lowercase().starts_with("speaker") {
-        speaker.to_string()
-    } else {
-        format!("Speaker {speaker}")
+impl RealtimeSpeakerLabels {
+    fn label(&mut self, speaker: Option<&str>) -> String {
+        let Some(key) = normalize_speaker_key(speaker) else {
+            return "Speaker".to_string();
+        };
+        let next_index = self.labels.len() + 1;
+
+        self.labels
+            .entry(key)
+            .or_insert_with(|| format!("Speaker {next_index}"))
+            .clone()
     }
+}
+
+fn normalize_speaker_key(speaker: Option<&str>) -> Option<String> {
+    let mut value = speaker?.trim();
+    if value.is_empty() {
+        return None;
+    }
+
+    let lower = value.to_lowercase();
+    if lower == "speaker" {
+        return None;
+    }
+    if let Some(stripped) = lower
+        .strip_prefix("speaker")
+        .map(str::trim)
+        .map(|value| value.trim_start_matches(['_', '-', ':']).trim())
+        .filter(|value| !value.is_empty())
+    {
+        value = stripped;
+    }
+
+    Some(value.to_string())
 }
 
 fn write_f32_samples(input: &[f32], writer: &SharedWavWriter, realtime: &SharedRealtimeSender) {
@@ -636,7 +667,7 @@ fn unix_seconds_now() -> u64 {
 mod tests {
     use super::{
         capture_file_name, delete_retained_file_at, is_realtime_revision, read_captured_audio_file,
-        sanitize_capture_id,
+        sanitize_capture_id, RealtimeSpeakerLabels,
     };
     use std::{fs, path::PathBuf};
 
@@ -662,6 +693,16 @@ mod tests {
         ));
         assert!(is_realtime_revision("hello there", "hello"));
         assert!(!is_realtime_revision("我已经把它打开了", "但是新的句子"));
+    }
+
+    #[test]
+    fn maps_raw_realtime_speaker_ids_to_user_facing_labels() {
+        let mut labels = RealtimeSpeakerLabels::default();
+
+        assert_eq!(labels.label(Some("0")), "Speaker 1");
+        assert_eq!(labels.label(Some("Speaker 0")), "Speaker 1");
+        assert_eq!(labels.label(Some("1")), "Speaker 2");
+        assert_eq!(labels.label(None), "Speaker");
     }
 
     #[test]

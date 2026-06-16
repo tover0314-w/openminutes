@@ -104,7 +104,7 @@ describe('App native microphone capture', () => {
         line: {
           id: `${meetingId}-live-2`,
           time: '00:17',
-          speaker: 'Speaker 2',
+          speaker: 'Speaker 0',
           text: '我已经把它打开了。可是我现在在刷牙',
           partial: true,
         },
@@ -113,8 +113,55 @@ describe('App native microphone capture', () => {
 
     const transcriptPane = screen.getByRole('complementary', { name: /live transcript/i })
     expect(within(transcriptPane).getByText(/我已经把它打开了。可是我现在在刷牙/i)).toBeInTheDocument()
-    expect(within(transcriptPane).getByText(/Speaker 2:/i)).toBeInTheDocument()
+    expect(within(transcriptPane).getByText(/Speaker 1:/i)).toBeInTheDocument()
+    expect(within(transcriptPane).queryByText(/Speaker 0:/i)).not.toBeInTheDocument()
     expect(within(transcriptPane).queryByText(/^Speaker: 我已经$/i)).not.toBeInTheDocument()
+  })
+
+  it('uses the final transcript after stop instead of keeping an inaccurate live draft', async () => {
+    const user = userEvent.setup()
+    localStorage.setItem(
+      APP_SETTINGS_STORAGE_KEY,
+      JSON.stringify({
+        ...defaultAppSettings,
+        transcriptionMode: 'local-demo',
+        notesMode: 'local-demo',
+      }),
+    )
+
+    render(<App />)
+
+    await user.click(screen.getByRole('button', { name: /start meeting/i }))
+    await waitFor(() => {
+      expect(captureMocks.start).toHaveBeenCalled()
+    })
+    await waitFor(() => {
+      expect(realtimeMocks.handlers.onLine).toBeDefined()
+    })
+    const meetingId = String((captureMocks.start.mock.calls[0] as unknown[])[0])
+
+    await act(async () => {
+      realtimeMocks.handlers.onLine?.({
+        meetingId,
+        line: {
+          id: `${meetingId}-live-1`,
+          time: '00:08',
+          speaker: 'Speaker 0',
+          text: '这是错误很多的实时草稿',
+          partial: true,
+        },
+      })
+    })
+    expect(screen.getByText(/这是错误很多的实时草稿/i)).toBeInTheDocument()
+
+    const meeting = screen.getByRole('region', { name: /meeting/i })
+    await user.click(within(meeting).getByRole('button', { name: /stop recording from meeting/i }))
+
+    const transcriptPane = await screen.findByRole('complementary', { name: /sources/i })
+    expect(
+      within(transcriptPane).getByText(/local demo transcript generated for native-recording/i),
+    ).toBeInTheDocument()
+    expect(within(transcriptPane).queryByText(/这是错误很多的实时草稿/i)).not.toBeInTheDocument()
   })
 
   it('runs the desktop meeting flow from native capture through AI Notes and raw audio cleanup', async () => {

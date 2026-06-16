@@ -949,11 +949,29 @@ fn extract_speaker_label(value: &Value) -> Option<String> {
         .map(ToOwned::to_owned)
         .or_else(|| raw.as_i64().map(|speaker| speaker.to_string()))?;
 
-    Some(if label.to_lowercase().starts_with("speaker") {
-        label
-    } else {
-        format!("Speaker {label}")
-    })
+    normalize_raw_speaker_label(&label)
+}
+
+fn normalize_raw_speaker_label(label: &str) -> Option<String> {
+    let mut normalized = label.trim();
+    if normalized.is_empty() {
+        return None;
+    }
+
+    let lower = normalized.to_lowercase();
+    if lower == "speaker" {
+        return None;
+    }
+    if let Some(stripped) = lower
+        .strip_prefix("speaker")
+        .map(str::trim)
+        .map(|value| value.trim_start_matches(['_', '-', ':']).trim())
+        .filter(|value| !value.is_empty())
+    {
+        normalized = stripped;
+    }
+
+    Some(normalized.to_string())
 }
 
 fn push_unique_lines(lines: &mut Vec<String>, incoming: Vec<String>) {
@@ -1088,9 +1106,26 @@ mod tests {
         let segments = extract_transcript_segments(&value);
 
         assert_eq!(segments[0].text, "first speaker line");
-        assert_eq!(segments[0].speaker.as_deref(), Some("Speaker 1"));
+        assert_eq!(segments[0].speaker.as_deref(), Some("1"));
         assert_eq!(segments[1].text, "second speaker line");
-        assert_eq!(segments[1].speaker.as_deref(), Some("Speaker 2"));
+        assert_eq!(segments[1].speaker.as_deref(), Some("2"));
+    }
+
+    #[test]
+    fn extracts_raw_speaker_labels_without_leaking_display_names() {
+        let value = json!({
+            "result": {
+                "utterances": [
+                    { "text": "zero speaker line", "speaker": "Speaker 0" },
+                    { "text": "one speaker line", "additions": { "speaker_id": 1 } }
+                ]
+            }
+        });
+
+        let segments = extract_transcript_segments(&value);
+
+        assert_eq!(segments[0].speaker.as_deref(), Some("0"));
+        assert_eq!(segments[1].speaker.as_deref(), Some("1"));
     }
 
     #[test]

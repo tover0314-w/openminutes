@@ -314,13 +314,14 @@ export function App() {
               : undefined,
           }
           if (baseMeeting.transcript.length) {
-            setLastAudioImport(undefined)
-            setTranscriptionStatus('idle')
-            setTranscriptionError('')
-            await generateAiNotesFromMeeting({
-              ...baseMeeting,
-              phase: 'generating_ai_notes',
-            })
+            const request = {
+              meetingId: meeting.id,
+              title: meeting.title,
+              file: capturedAudio.file,
+              baseMeeting,
+            }
+            setLastAudioImport(request)
+            await transcribeAudioImport(request, { fallbackToBaseTranscript: true })
             return
           }
           const request = {
@@ -419,8 +420,11 @@ export function App() {
     await transcribeAudioImport(lastAudioImport)
   }
 
-  const transcribeAudioImport = async (request: AudioImportRequest) => {
-      const importedMeeting: Meeting = request.baseMeeting
+  const transcribeAudioImport = async (
+    request: AudioImportRequest,
+    options: { fallbackToBaseTranscript?: boolean } = {},
+  ) => {
+    const importedMeeting: Meeting = request.baseMeeting
       ? {
           ...request.baseMeeting,
           phase: 'finalizing_transcript',
@@ -458,6 +462,21 @@ export function App() {
       setTranscriptionStatus('idle')
       await generateAiNotesFromMeeting(transcriptMeeting)
     } catch (error) {
+      const fallbackMeeting =
+        options.fallbackToBaseTranscript && request.baseMeeting?.transcript.length
+          ? {
+              ...request.baseMeeting,
+              phase: 'generating_ai_notes' as const,
+              transcript: finalizeTranscriptLines(request.baseMeeting.transcript),
+            }
+          : undefined
+      if (fallbackMeeting) {
+        setTranscriptionStatus(isProviderConfigurationError(error) ? 'configuration_error' : 'error')
+        setTranscriptionError(`Final transcript failed; using live draft. ${errorMessage(error)}`)
+        await generateAiNotesFromMeeting(fallbackMeeting)
+        return
+      }
+
       setMeeting((current) =>
         current.id === request.meetingId
           ? {
@@ -1783,7 +1802,7 @@ function TranscriptPane({
               >
                 <time>{line.time}</time>
                 <p>
-                  <strong>{line.speaker}:</strong> {line.text}
+                  <strong>{normalizeSpeakerName(line.speaker)}:</strong> {line.text}
                 </p>
               </button>
             )
@@ -1799,7 +1818,7 @@ function TranscriptPane({
             >
               <time>{line.time}</time>
               <p>
-                <strong>{line.speaker}:</strong> {line.text}
+                <strong>{normalizeSpeakerName(line.speaker)}:</strong> {line.text}
               </p>
             </div>
           )
@@ -2553,7 +2572,16 @@ function uniqueTranscriptSpeakers(transcript: TranscriptLine[]): string[] {
 }
 
 function normalizeSpeakerName(value: string): string {
-  return value.trim() || 'Speaker'
+  const trimmed = value.trim()
+  if (!trimmed) return 'Speaker'
+
+  const speakerMatch = /^speaker[\s_-]*(\d+)$/i.exec(trimmed)
+  if (speakerMatch) {
+    const speakerIndex = Number(speakerMatch[1])
+    if (Number.isFinite(speakerIndex) && speakerIndex <= 0) return 'Speaker 1'
+  }
+
+  return trimmed
 }
 
 function audioTitleFromFileName(fileName: string): string {
