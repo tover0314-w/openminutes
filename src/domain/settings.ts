@@ -52,9 +52,9 @@ export interface AppSettingsRepository {
 export const APP_SETTINGS_STORAGE_KEY = 'openminutes.settings.v1'
 
 export const defaultAppSettings: AppSettings = {
-  captureSource: 'mic-system',
+  captureSource: 'microphone-only',
   meetingPreference: 'focus-first',
-  systemAudioEnabled: true,
+  systemAudioEnabled: false,
   saveRawAudio: false,
   hideTranscriptByDefault: true,
   noPublicLinks: true,

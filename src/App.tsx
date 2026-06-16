@@ -232,6 +232,10 @@ export function App() {
     return apiKeyRepository
   }
 
+  const recoverEmptyErrorMeeting = () => {
+    setMeeting((current) => (isEmptyErrorMeeting(current) ? createDraftMeeting() : current))
+  }
+
   const startMeeting = async () => {
     const repository = await resolveApiKeyRepository()
     const setupError = await startMeetingSetupError(appSettings, repository)
@@ -352,6 +356,15 @@ export function App() {
     setTranscriptionError('')
     setLastAudioImport(undefined)
     setRoute('meeting')
+    if (!hasMeetingSourceMaterial(demoSource)) {
+      setMeeting({
+        ...demoSource,
+        phase: 'needs_review',
+      })
+      setAiGenerationStatus('idle')
+      setAiGenerationError('')
+      return
+    }
     await generateAiNotesFromMeeting(demoSource, { localDemoFallback: true })
   }
 
@@ -466,6 +479,21 @@ export function App() {
     sourceMeeting: Meeting,
     options: { localDemoFallback?: boolean } = {},
   ) => {
+    if (!hasMeetingSourceMaterial(sourceMeeting)) {
+      setAiGenerationStatus('idle')
+      setAiGenerationError('')
+      setMeeting((current) =>
+        current.id === sourceMeeting.id
+          ? {
+              ...sourceMeeting,
+              phase: sourceMeeting.phase === 'draft' ? 'draft' : 'needs_review',
+              aiNotes: undefined,
+            }
+          : current,
+      )
+      return undefined
+    }
+
     setAiGenerationStatus('generating')
     setAiGenerationError('')
     const generatingMeeting: Meeting = {
@@ -515,6 +543,7 @@ export function App() {
       }))
       setWorkflowError('')
       setApiKeyStatus('saved')
+      recoverEmptyErrorMeeting()
     } catch (error) {
       setApiKeyStatus('error')
       setApiKeyError(errorMessage(error))
@@ -551,6 +580,7 @@ export function App() {
           [provider]: true,
         }))
         setWorkflowError('')
+        recoverEmptyErrorMeeting()
       }
     } catch (error) {
       setApiConnectionStatus('error')
@@ -1030,7 +1060,7 @@ function TodayPage({
         </div>
       </div>
       <aside className="pane jelly-card">
-        <PaneHeader title="Current Meeting" subtitle="Mic + system audio" />
+        <PaneHeader title="Current Meeting" subtitle="Default microphone" />
         <div className="summary-card">
           <h3>{activeMeeting?.title ?? 'Ready when you are'}</h3>
           <p>
@@ -1196,7 +1226,7 @@ function ManualNotesPane({
         subtitle={
           sourceMode
             ? 'Focus source used by AI Notes'
-            : `${meeting.phase === 'recording' ? 'Recording' : 'Ready'} - Focus mode - Mic + system audio`
+            : `${meeting.phase === 'recording' ? 'Recording' : 'Ready'} - Focus mode - microphone input`
         }
         aside={
           <div className="status-row">
@@ -2016,15 +2046,12 @@ function SettingsContent({
             }
           />
         </FieldGroup>
-        <FieldGroup label="Capture source">
-          <SegmentedControl
-            left="Mic + System"
-            right="Microphone Only"
-            value={settings.captureSource === 'mic-system' ? 'left' : 'right'}
-            onChange={(value) =>
-              onUpdateSettings({ captureSource: value === 'left' ? 'mic-system' : 'microphone-only' })
-            }
-          />
+        <FieldGroup label="Recording input">
+          <SettingsInput label="Active source" value="Default microphone" readOnly />
+          <p className="settings-hint">
+            System meeting audio is not captured in this build. ScreenCaptureKit support is required
+            for headphone meetings.
+          </p>
         </FieldGroup>
         <FieldGroup label="Desktop controls">
           <ToggleRow
@@ -2049,13 +2076,7 @@ function SettingsContent({
           ) : null}
           <SettingsInput label="Start shortcut" value={MEETING_GLOBAL_SHORTCUT_LABEL} readOnly />
         </FieldGroup>
-        <FieldGroup label="System audio">
-          <ToggleRow
-            title="ScreenCaptureKit"
-            description="macOS system audio capture target."
-            checked={settings.systemAudioEnabled}
-            onToggle={() => onUpdateSettings({ systemAudioEnabled: !settings.systemAudioEnabled })}
-          />
+        <FieldGroup label="Recording files">
           <ToggleRow
             title="Save raw audio"
             description="Off by default after transcription."
@@ -2910,7 +2931,14 @@ function ToggleRow({
 }
 
 function latestRealMeeting(meetings: Meeting[]): Meeting | undefined {
-  return meetings.find((meeting) => !isSeedMeeting(meeting) && !isEmptyDraftMeeting(meeting))
+  return meetings.find(
+    (meeting) =>
+      !isSeedMeeting(meeting) &&
+      !isEmptyDraftMeeting(meeting) &&
+      !isEmptyErrorMeeting(meeting) &&
+      !isSourcelessGeneratedMeeting(meeting) &&
+      !isLegacyLocalDemoGeneratedMeeting(meeting),
+  )
 }
 
 function isSeedMeeting(meeting: Meeting): boolean {
@@ -2924,6 +2952,51 @@ function isEmptyDraftMeeting(meeting: Meeting): boolean {
     !meeting.transcript.length &&
     !meeting.aiNotes
   )
+}
+
+function isEmptyErrorMeeting(meeting: Meeting): boolean {
+  return (
+    meeting.phase === 'error' &&
+    !meeting.manualNotes.trim() &&
+    !meeting.transcript.length &&
+    !meeting.aiNotes &&
+    !meeting.rawAudio
+  )
+}
+
+function isSourcelessGeneratedMeeting(meeting: Meeting): boolean {
+  return Boolean(meeting.aiNotes) && !hasMeetingSourceMaterial(meeting)
+}
+
+function isLegacyLocalDemoGeneratedMeeting(meeting: Meeting): boolean {
+  if (!meeting.aiNotes) return false
+
+  const aiNotesText = [
+    meeting.aiNotes.summary,
+    meeting.aiNotes.document,
+    meeting.aiNotes.followUpDraft,
+    ...meeting.aiNotes.keyPoints,
+    ...meeting.aiNotes.decisions,
+    ...meeting.aiNotes.openQuestions,
+    ...meeting.aiNotes.actionItems.map((item) => item.text),
+  ]
+    .filter(Boolean)
+    .join('\n')
+    .toLowerCase()
+  const transcriptText = meeting.transcript
+    .map((line) => line.text)
+    .join('\n')
+    .toLowerCase()
+
+  return (
+    aiNotesText.includes('this local review confirms') ||
+    aiNotesText.includes('local demo') ||
+    transcriptText.includes('local demo transcript generated')
+  )
+}
+
+function hasMeetingSourceMaterial(meeting: Meeting): boolean {
+  return Boolean(meeting.manualNotes.trim() || meeting.transcript.length)
 }
 
 function formatTodayLabel(now = new Date()): string {

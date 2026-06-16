@@ -2,23 +2,34 @@ import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { App } from './App'
-import { createDemoMeeting, type Meeting, type MeetingPhase } from './domain/meeting'
+import {
+  createDemoMeeting,
+  createDraftMeeting,
+  type AiNotes,
+  type Meeting,
+  type MeetingPhase,
+} from './domain/meeting'
+import { CAPSULE_STATE_STORAGE_KEY } from './domain/capsule'
 import { APP_SETTINGS_STORAGE_KEY, defaultAppSettings } from './domain/settings'
 import { MEETINGS_STORAGE_KEY } from './domain/storage'
+
+function seedStoredMeetings(meetings: Meeting[]) {
+  localStorage.setItem(
+    MEETINGS_STORAGE_KEY,
+    JSON.stringify({
+      version: 1,
+      savedAt: new Date().toISOString(),
+      meetings,
+    }),
+  )
+}
 
 function seedDemoMeeting(phase: MeetingPhase = 'recording'): Meeting {
   const meeting = {
     ...createDemoMeeting(phase),
     id: 'test-product-sync',
   }
-  localStorage.setItem(
-    MEETINGS_STORAGE_KEY,
-    JSON.stringify({
-      version: 1,
-      savedAt: new Date().toISOString(),
-      meetings: [meeting],
-    }),
-  )
+  seedStoredMeetings([meeting])
   return meeting
 }
 
@@ -43,6 +54,97 @@ describe('App', () => {
     expect(screen.getByRole('complementary', { name: /^transcript$/i })).toBeInTheDocument()
     expect(screen.queryByText(/^live$/i)).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /stop recording from meeting/i })).not.toBeInTheDocument()
+  })
+
+  it('ignores a stale empty error meeting so the capsule can recover', async () => {
+    const staleErrorMeeting: Meeting = {
+      ...createDraftMeeting(),
+      id: 'stale-empty-error',
+      phase: 'error',
+    }
+    seedStoredMeetings([staleErrorMeeting])
+
+    render(<App />)
+
+    expect(screen.getByText(/no meetings yet/i)).toBeInTheDocument()
+    await waitFor(() => {
+      const payload = JSON.parse(localStorage.getItem(CAPSULE_STATE_STORAGE_KEY) ?? '{}')
+      expect(payload.phase).toBe('draft')
+    })
+  })
+
+  it('ignores old AI Notes that have no transcript, human notes, or raw audio source', () => {
+    const sourcelessNotes: AiNotes = {
+      summary: 'This local review confirms that New Meeting has enough source material.',
+      decisions: [],
+      actionItems: [],
+      openQuestions: [],
+      keyPoints: [],
+      followUpDraft: '',
+      document: '## What Mattered\n\nThis local review confirms that New Meeting has enough source material.',
+    }
+    const staleGeneratedMeeting: Meeting = {
+      ...createDraftMeeting(),
+      id: 'stale-sourceless-review',
+      phase: 'ready',
+      aiNotes: sourcelessNotes,
+      rawAudio: {
+        path: '/tmp/old-openminutes.wav',
+        fileName: 'old-openminutes.wav',
+        durationMillis: 1000,
+        retainedAt: new Date().toISOString(),
+      },
+    }
+    seedStoredMeetings([staleGeneratedMeeting])
+
+    render(<App />)
+
+    expect(screen.getByText(/no meetings yet/i)).toBeInTheDocument()
+    expect(screen.queryByText(/this local review confirms/i)).not.toBeInTheDocument()
+  })
+
+  it('does not restore legacy local demo meetings as real meetings', () => {
+    const demoNotes: AiNotes = {
+      summary: 'This local review confirms that New Meeting has enough source material.',
+      decisions: ['Use local demo mode only for product walkthroughs and offline testing.'],
+      actionItems: [],
+      openQuestions: [],
+      keyPoints: ['1 transcript lines are available as editable source text.'],
+      followUpDraft: 'The local demo flow is working end to end.',
+      document: '## What Mattered\n\nThis local review confirms that New Meeting has enough source material.',
+    }
+    const staleDemoMeeting: Meeting = {
+      ...createDraftMeeting(),
+      id: 'stale-local-demo-review',
+      phase: 'ready',
+      transcript: [
+        {
+          id: 'stale-local-demo-review-mock-1',
+          time: '00:04',
+          speaker: 'Alex',
+          text: 'This is a local demo transcript generated for native-recording.',
+        },
+      ],
+      aiNotes: demoNotes,
+    }
+    seedStoredMeetings([staleDemoMeeting])
+
+    render(<App />)
+
+    expect(screen.getByText(/no meetings yet/i)).toBeInTheDocument()
+    expect(screen.queryByText(/this local review confirms/i)).not.toBeInTheDocument()
+  })
+
+  it('does not generate fake Review content when stopping an empty browser recording', async () => {
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.click(screen.getByRole('button', { name: /start meeting/i }))
+    await user.click(screen.getByRole('button', { name: /stop recording from meeting/i }))
+
+    expect(await screen.findByText(/no ai notes yet/i)).toBeInTheDocument()
+    expect(screen.getByText(/capture human notes or transcript before generating a review/i)).toBeInTheDocument()
+    expect(screen.queryByText(/this local review confirms/i)).not.toBeInTheDocument()
   })
 
   it('shows live transcript while recording and AI Notes after stop', async () => {
