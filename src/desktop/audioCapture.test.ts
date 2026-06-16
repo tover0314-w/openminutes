@@ -76,4 +76,25 @@ describe('TauriAudioCaptureSession', () => {
     expect(invoke).toHaveBeenCalledWith('stop_audio_capture', { keepFile: true })
     expect(result.retained).toBe(true)
   })
+
+  it('passes realtime provider settings when starting capture', async () => {
+    const invoke = vi.fn(async () => ({
+      recording: true,
+      outputPath: '/tmp/recording.wav',
+      deviceName: 'MacBook Microphone',
+      startedAtUnixSeconds: 1_797_154_400,
+    })) as TauriInvoke
+    const session = new TauriAudioCaptureSession(invoke)
+
+    await session.start('meeting-1', {
+      realtimeProvider: 'deepgram',
+      realtimeModel: 'nova-3',
+    })
+
+    expect(invoke).toHaveBeenCalledWith('start_audio_capture', {
+      meetingId: 'meeting-1',
+      realtimeProvider: 'deepgram',
+      realtimeModel: 'nova-3',
+    })
+  })
 })

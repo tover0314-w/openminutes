@@ -1,4 +1,4 @@
-use crate::doubao_realtime;
+use crate::{deepgram_realtime, doubao_realtime};
 use cpal::{
     traits::{DeviceTrait, HostTrait, StreamTrait},
     SampleFormat, Stream,
@@ -26,11 +26,17 @@ type SharedWavWriter = Arc<Mutex<Option<WavWriter<BufWriter<File>>>>>;
 type SharedRealtimeSender = Arc<Mutex<Option<tokio_mpsc::UnboundedSender<Vec<i16>>>>>;
 
 #[derive(Debug, Clone)]
-pub struct RealtimeTranscriptionConfig {
-    pub api_key: String,
-    pub endpoint: String,
-    pub resource_id: String,
-    pub model_name: String,
+pub enum RealtimeTranscriptionConfig {
+    Doubao {
+        api_key: String,
+        endpoint: String,
+        resource_id: String,
+        model_name: String,
+    },
+    Deepgram {
+        api_key: String,
+        model_name: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -420,45 +426,69 @@ fn start_realtime_transcription(
         let mut current_line_time = String::new();
         let mut current_line_text = String::new();
         let mut speaker_labels = RealtimeSpeakerLabels::default();
-        let doubao_config = doubao_realtime::DoubaoRealtimeConfig::new(config.api_key)
-            .with_endpoint(config.endpoint)
-            .with_resource_id(config.resource_id)
-            .with_model_name(config.model_name);
         let emit_app = app.clone();
         let emit_meeting_id = meeting_id.clone();
+        let on_text = move |text: String, speaker: Option<String>, final_phase: bool| {
+            let text = text.trim().to_string();
+            if !should_emit_realtime_update(&current_line_text, &text, final_phase) {
+                return;
+            }
 
-        let result = doubao_realtime::stream_pcm_chunks(
-            doubao_config,
-            sample_rate,
-            channels,
-            receiver,
-            move |text, speaker, final_phase| {
-                let text = text.trim().to_string();
-                if text.is_empty() || text == current_line_text {
-                    return;
-                }
+            if should_start_new_realtime_line(&current_line_id, &current_line_text, &text) {
+                line_index += 1;
+                current_line_id = format!("{}-live-{}", emit_meeting_id, line_index);
+                current_line_time = format_clock_time(started_at.elapsed().as_millis() as u64);
+            }
 
-                if current_line_id.is_empty() || !is_realtime_revision(&current_line_text, &text) {
-                    line_index += 1;
-                    current_line_id = format!("{}-live-{}", emit_meeting_id, line_index);
-                    current_line_time = format_clock_time(started_at.elapsed().as_millis() as u64);
-                }
-
-                current_line_text = text.clone();
-                let payload = RealtimeTranscriptPayload {
-                    meeting_id: emit_meeting_id.clone(),
-                    line: RealtimeTranscriptLine {
-                        id: current_line_id.clone(),
-                        time: current_line_time.clone(),
-                        speaker: speaker_labels.label(speaker.as_deref()),
-                        text,
-                        partial: !final_phase,
-                    },
-                };
-                let _ = emit_app.emit(REALTIME_TRANSCRIPT_EVENT, payload);
-            },
-        )
-        .await;
+            current_line_text = text.clone();
+            let payload = RealtimeTranscriptPayload {
+                meeting_id: emit_meeting_id.clone(),
+                line: RealtimeTranscriptLine {
+                    id: current_line_id.clone(),
+                    time: current_line_time.clone(),
+                    speaker: speaker_labels.label(speaker.as_deref()),
+                    text,
+                    partial: !final_phase,
+                },
+            };
+            let _ = emit_app.emit(REALTIME_TRANSCRIPT_EVENT, payload);
+        };
+        let result = match config {
+            RealtimeTranscriptionConfig::Doubao {
+                api_key,
+                endpoint,
+                resource_id,
+                model_name,
+            } => {
+                let doubao_config = doubao_realtime::DoubaoRealtimeConfig::new(api_key)
+                    .with_endpoint(endpoint)
+                    .with_resource_id(resource_id)
+                    .with_model_name(model_name);
+                doubao_realtime::stream_pcm_chunks(
+                    doubao_config,
+                    sample_rate,
+                    channels,
+                    receiver,
+                    on_text,
+                )
+                .await
+            }
+            RealtimeTranscriptionConfig::Deepgram {
+                api_key,
+                model_name,
+            } => {
+                let deepgram_config = deepgram_realtime::DeepgramRealtimeConfig::new(api_key)
+                    .with_model_name(model_name);
+                deepgram_realtime::stream_pcm_chunks(
+                    deepgram_config,
+                    sample_rate,
+                    channels,
+                    receiver,
+                    on_text,
+                )
+                .await
+            }
+        };
 
         if let Err(message) = result {
             let _ = app.emit(
@@ -472,6 +502,23 @@ fn start_realtime_transcription(
     });
 
     Arc::new(Mutex::new(Some(sender)))
+}
+
+fn should_emit_realtime_update(
+    current_line_text: &str,
+    next_text: &str,
+    final_phase: bool,
+) -> bool {
+    !next_text.trim().is_empty() && (next_text != current_line_text || final_phase)
+}
+
+fn should_start_new_realtime_line(
+    current_line_id: &str,
+    current_line_text: &str,
+    next_text: &str,
+) -> bool {
+    current_line_id.is_empty()
+        || (next_text != current_line_text && !is_realtime_revision(current_line_text, next_text))
 }
 
 fn close_realtime_sender(sender: &SharedRealtimeSender) {
@@ -667,7 +714,8 @@ fn unix_seconds_now() -> u64 {
 mod tests {
     use super::{
         capture_file_name, delete_retained_file_at, is_realtime_revision, read_captured_audio_file,
-        sanitize_capture_id, RealtimeSpeakerLabels,
+        sanitize_capture_id, should_emit_realtime_update, should_start_new_realtime_line,
+        RealtimeSpeakerLabels,
     };
     use std::{fs, path::PathBuf};
 
@@ -693,6 +741,40 @@ mod tests {
         ));
         assert!(is_realtime_revision("hello there", "hello"));
         assert!(!is_realtime_revision("我已经把它打开了", "但是新的句子"));
+    }
+
+    #[test]
+    fn emits_final_update_even_when_text_matches_partial() {
+        assert!(!should_emit_realtime_update(
+            "我正在测试实时转录",
+            "我正在测试实时转录",
+            false
+        ));
+        assert!(should_emit_realtime_update(
+            "我正在测试实时转录",
+            "我正在测试实时转录",
+            true
+        ));
+        assert!(!should_emit_realtime_update(
+            "我正在测试实时转录",
+            "  ",
+            true
+        ));
+    }
+
+    #[test]
+    fn keeps_revisions_on_the_same_realtime_line() {
+        assert!(should_start_new_realtime_line("", "", "我正在测试"));
+        assert!(!should_start_new_realtime_line(
+            "meeting-live-1",
+            "我正在",
+            "我正在测试"
+        ));
+        assert!(should_start_new_realtime_line(
+            "meeting-live-1",
+            "我正在测试",
+            "这是下一句话"
+        ));
     }
 
     #[test]

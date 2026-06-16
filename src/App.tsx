@@ -99,6 +99,7 @@ const apiKeyProviders: Array<{ id: ApiProviderId; label: string }> = [
 ]
 
 const realtimeProviderOptions: Array<{ id: RealtimeTranscriptionProviderId; label: string }> = [
+  { id: 'deepgram', label: 'Deepgram' },
   { id: 'doubao-realtime', label: 'Doubao' },
 ]
 

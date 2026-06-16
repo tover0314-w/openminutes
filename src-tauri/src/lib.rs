@@ -1,4 +1,5 @@
 mod audio_capture;
+pub mod deepgram_realtime;
 pub mod doubao_realtime;
 mod storage;
 
@@ -271,7 +272,16 @@ fn start_audio_capture(
     realtime_model: Option<String>,
 ) -> Result<AudioCaptureStatus, String> {
     let realtime_config = match realtime_provider.as_deref() {
-        Some("doubao-realtime") => Some(audio_capture::RealtimeTranscriptionConfig {
+        Some("deepgram") => Some(audio_capture::RealtimeTranscriptionConfig::Deepgram {
+            api_key: load_provider_api_key_string("deepgram")?,
+            model_name: realtime_model
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .unwrap_or(deepgram_realtime::DEFAULT_DEEPGRAM_REALTIME_MODEL)
+                .to_string(),
+        }),
+        Some("doubao-realtime") => Some(audio_capture::RealtimeTranscriptionConfig::Doubao {
             api_key: load_provider_api_key_string("doubao")?,
             endpoint: doubao_realtime::DEFAULT_DOUBAO_REALTIME_ENDPOINT.to_string(),
             resource_id: doubao_realtime::DEFAULT_DOUBAO_REALTIME_RESOURCE_ID.to_string(),

@@ -39,12 +39,12 @@ describe('normalizeAppSettings', () => {
     const settings = normalizeAppSettings({
       aiProvider: 'openrouter',
       transcriptionProvider: 'doubao',
-      realtimeTranscriptionProvider: 'doubao-realtime',
+      realtimeTranscriptionProvider: 'deepgram',
     })
 
     expect(settings.aiProvider).toBe('openrouter')
     expect(settings.transcriptionProvider).toBe('doubao')
-    expect(settings.realtimeTranscriptionProvider).toBe('doubao-realtime')
+    expect(settings.realtimeTranscriptionProvider).toBe('deepgram')
   })
 
   it('keeps the desktop capsule hidden flag separate from enablement', () => {

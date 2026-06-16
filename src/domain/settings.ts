@@ -195,7 +195,7 @@ function isBatchTranscriptionProvider(value: unknown): value is BatchTranscripti
 }
 
 function isRealtimeTranscriptionProvider(value: unknown): value is RealtimeTranscriptionProviderId {
-  return value === 'doubao-realtime'
+  return value === 'doubao-realtime' || value === 'deepgram'
 }
 
 function isProviderRunMode(value: unknown): value is ProviderRunMode {

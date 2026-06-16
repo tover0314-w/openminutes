@@ -38,11 +38,15 @@ export class TauriAudioCaptureSession {
   constructor(private readonly invoke: TauriInvoke) {}
 
   start(meetingId: string, options: AudioCaptureStartOptions = {}): Promise<AudioCaptureStatus> {
-    return this.invoke<AudioCaptureStatus>('start_audio_capture', {
-      meetingId,
-      realtimeProvider: options.realtimeProvider,
-      realtimeModel: options.realtimeModel,
-    })
+    const payload: {
+      meetingId: string
+      realtimeProvider?: RealtimeTranscriptionProviderId
+      realtimeModel?: string
+    } = { meetingId }
+    if (options.realtimeProvider) payload.realtimeProvider = options.realtimeProvider
+    if (options.realtimeModel) payload.realtimeModel = options.realtimeModel
+
+    return this.invoke<AudioCaptureStatus>('start_audio_capture', payload)
   }
 
   async stop({ keepFile = false }: { keepFile?: boolean } = {}): Promise<CapturedAudioResult> {
