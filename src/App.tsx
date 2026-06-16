@@ -107,6 +107,7 @@ const batchSttProviderOptions: Array<{ id: BatchTranscriptionProviderId; label: 
   { id: 'openai', label: 'OpenAI' },
   { id: 'groq', label: 'Groq' },
   { id: 'doubao', label: 'Doubao' },
+  { id: 'deepgram', label: 'Deepgram' },
   { id: 'openai-compatible', label: 'Compatible' },
 ]
 
@@ -2615,6 +2616,7 @@ function defaultTranscriptionBaseUrl(provider: BatchTranscriptionProviderId): st
 function defaultTranscriptionModel(provider: BatchTranscriptionProviderId): string {
   if (provider === 'groq') return 'whisper-large-v3-turbo'
   if (provider === 'doubao') return 'bigmodel'
+  if (provider === 'deepgram') return 'nova-3'
   if (provider === 'openai-compatible') return 'whisper-1'
   return 'gpt-4o-mini-transcribe'
 }

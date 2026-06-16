@@ -10,7 +10,12 @@ export type ApiProviderId =
   | 'deepgram'
   | 'assemblyai'
 export type AiProviderId = 'openai' | 'groq' | 'openrouter' | 'openai-compatible' | 'ollama'
-export type BatchTranscriptionProviderId = 'openai' | 'groq' | 'doubao' | 'openai-compatible'
+export type BatchTranscriptionProviderId =
+  | 'openai'
+  | 'groq'
+  | 'doubao'
+  | 'deepgram'
+  | 'openai-compatible'
 export type RealtimeTranscriptionProviderId =
   | 'openai-realtime'
   | 'doubao-realtime'
@@ -191,7 +196,13 @@ function isAiProvider(value: unknown): value is AiProviderId {
 }
 
 function isBatchTranscriptionProvider(value: unknown): value is BatchTranscriptionProviderId {
-  return value === 'openai' || value === 'groq' || value === 'doubao' || value === 'openai-compatible'
+  return (
+    value === 'openai' ||
+    value === 'groq' ||
+    value === 'doubao' ||
+    value === 'deepgram' ||
+    value === 'openai-compatible'
+  )
 }
 
 function isRealtimeTranscriptionProvider(value: unknown): value is RealtimeTranscriptionProviderId {

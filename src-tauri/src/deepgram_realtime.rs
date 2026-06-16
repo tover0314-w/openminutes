@@ -12,12 +12,14 @@ use tokio_tungstenite::{
 
 pub const DEFAULT_DEEPGRAM_REALTIME_ENDPOINT: &str = "wss://api.deepgram.com/v1/listen";
 pub const DEFAULT_DEEPGRAM_REALTIME_MODEL: &str = "nova-3";
+pub const DEFAULT_DEEPGRAM_REALTIME_LANGUAGE: &str = "zh";
 
 #[derive(Debug, Clone)]
 pub struct DeepgramRealtimeConfig {
     pub api_key: String,
     pub endpoint: String,
     pub model_name: String,
+    pub language: String,
     pub timeout: Duration,
 }
 
@@ -27,12 +29,18 @@ impl DeepgramRealtimeConfig {
             api_key: api_key.into(),
             endpoint: DEFAULT_DEEPGRAM_REALTIME_ENDPOINT.to_string(),
             model_name: DEFAULT_DEEPGRAM_REALTIME_MODEL.to_string(),
+            language: DEFAULT_DEEPGRAM_REALTIME_LANGUAGE.to_string(),
             timeout: Duration::from_secs(20),
         }
     }
 
     pub fn with_model_name(mut self, model_name: impl Into<String>) -> Self {
         self.model_name = model_name.into();
+        self
+    }
+
+    pub fn with_language(mut self, language: impl Into<String>) -> Self {
+        self.language = language.into();
         self
     }
 }
@@ -167,8 +175,8 @@ fn websocket_url(
         ("vad_events", "true".to_string()),
         ("punctuate", "true".to_string()),
         ("smart_format", "true".to_string()),
-        ("diarize_model", "latest".to_string()),
-        ("language", "multi".to_string()),
+        ("diarize", "true".to_string()),
+        ("language", language_for_config(config).to_string()),
     ];
     let query = params
         .iter()
@@ -177,6 +185,15 @@ fn websocket_url(
         .join("&");
 
     Ok(format!("{endpoint}{separator}{query}"))
+}
+
+fn language_for_config(config: &DeepgramRealtimeConfig) -> &str {
+    let language = config.language.trim();
+    if language.is_empty() {
+        DEFAULT_DEEPGRAM_REALTIME_LANGUAGE
+    } else {
+        language
+    }
 }
 
 async fn drain_available_server_messages<F>(
@@ -326,8 +343,8 @@ mod tests {
         assert!(url.contains("encoding=linear16"));
         assert!(url.contains("sample_rate=16000"));
         assert!(url.contains("interim_results=true"));
-        assert!(url.contains("diarize_model=latest"));
-        assert!(url.contains("language=multi"));
+        assert!(url.contains("diarize=true"));
+        assert!(url.contains("language=zh"));
     }
 
     #[test]

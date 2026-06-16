@@ -38,12 +38,12 @@ describe('normalizeAppSettings', () => {
   it('keeps cloud provider selections for transcription and AI Notes', () => {
     const settings = normalizeAppSettings({
       aiProvider: 'openrouter',
-      transcriptionProvider: 'doubao',
+      transcriptionProvider: 'deepgram',
       realtimeTranscriptionProvider: 'deepgram',
     })
 
     expect(settings.aiProvider).toBe('openrouter')
-    expect(settings.transcriptionProvider).toBe('doubao')
+    expect(settings.transcriptionProvider).toBe('deepgram')
     expect(settings.realtimeTranscriptionProvider).toBe('deepgram')
   })
 

@@ -1,4 +1,5 @@
 import { type ApiKeyRepository } from './apiKey'
+import { DeepgramTranscriptionProvider } from './deepgramProvider'
 import { DoubaoDesktopTranscriptionProvider } from '../desktop/doubaoTranscription'
 import {
   MissingApiKeyError,
@@ -29,6 +30,9 @@ export function createTranscriptionProvider(
   if (settings.transcriptionMode === 'local-demo') return new MockTranscriptionProvider()
   if (settings.transcriptionProvider === 'doubao') {
     return new DoubaoDesktopTranscriptionProvider(settings, apiKeys)
+  }
+  if (settings.transcriptionProvider === 'deepgram') {
+    return new DeepgramTranscriptionProvider(settings, apiKeys)
   }
 
   return new OpenAICompatibleTranscriptionProvider(settings, apiKeys)

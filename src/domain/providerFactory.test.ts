@@ -37,4 +37,13 @@ describe('provider factory', () => {
 
     expect(provider.id).toBe('doubao-desktop-transcription')
   })
+
+  it('uses the Deepgram provider when Deepgram is selected for STT', () => {
+    const provider = createTranscriptionProvider(
+      { ...defaultAppSettings, transcriptionProvider: 'deepgram', sttModel: 'nova-3' },
+      createMemoryApiKeyRepository(),
+    )
+
+    expect(provider.id).toBe('deepgram-transcription')
+  })
 })
