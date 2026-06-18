@@ -25,6 +25,7 @@ export type ProviderRunMode = 'provider' | 'local-demo'
 
 export interface AppSettings {
   captureSource: CaptureSource
+  audioInputDeviceName: string
   meetingPreference: MeetingPreference
   systemAudioEnabled: boolean
   saveRawAudio: boolean
@@ -58,6 +59,7 @@ export const APP_SETTINGS_STORAGE_KEY = 'openminutes.settings.v1'
 
 export const defaultAppSettings: AppSettings = {
   captureSource: 'microphone-only',
+  audioInputDeviceName: '',
   meetingPreference: 'focus-first',
   systemAudioEnabled: false,
   saveRawAudio: false,
@@ -117,6 +119,10 @@ export function normalizeAppSettings(value: unknown): AppSettings {
     captureSource: isCaptureSource(partial.captureSource)
       ? partial.captureSource
       : defaultAppSettings.captureSource,
+    audioInputDeviceName: stringOrDefaultAllowEmpty(
+      partial.audioInputDeviceName,
+      defaultAppSettings.audioInputDeviceName,
+    ),
     meetingPreference: isMeetingPreference(partial.meetingPreference)
       ? partial.meetingPreference
       : defaultAppSettings.meetingPreference,
@@ -175,6 +181,10 @@ function booleanOrDefault(value: unknown, fallback: boolean): boolean {
 
 function stringOrDefault(value: unknown, fallback: string): string {
   return typeof value === 'string' && value.trim() ? value : fallback
+}
+
+function stringOrDefaultAllowEmpty(value: unknown, fallback: string): string {
+  return typeof value === 'string' ? value : fallback
 }
 
 function isCaptureSource(value: unknown): value is CaptureSource {

@@ -21,6 +21,8 @@ import { type ApiKeyRepository, createMemoryApiKeyRepository } from './domain/ap
 import { createTauriApiKeyRepository } from './desktop/apiKeyRepository'
 import {
   createTauriAudioCaptureSession,
+  listTauriAudioInputDevices,
+  type AudioInputDevice,
   type AudioCaptureStartOptions,
 } from './desktop/audioCapture'
 import { selectTauriAudioFile } from './desktop/audioImport'
@@ -183,6 +185,7 @@ export function App() {
   const [apiConnectionStatus, setApiConnectionStatus] = useState<ApiConnectionStatus>('idle')
   const [apiConnectionResult, setApiConnectionResult] =
     useState<ProviderConnectionTestResult | undefined>()
+  const [audioInputDevices, setAudioInputDevices] = useState<AudioInputDevice[]>([])
   const [workflowError, setWorkflowError] = useState('')
   const capsuleCommandHandlersRef = useRef<{
     start: () => void | Promise<void>
@@ -266,7 +269,7 @@ export function App() {
       const captureSession = await createTauriAudioCaptureSession()
       await captureSession?.start(
         recordingMeeting.id,
-        await realtimeCaptureOptions(appSettings, repository),
+        await audioCaptureOptions(appSettings, repository),
       )
     } catch (error) {
       setMeeting((current) =>
@@ -792,6 +795,11 @@ export function App() {
       setStorageMode('desktop')
     })
 
+    listTauriAudioInputDevices().then((devices) => {
+      if (cancelled) return
+      setAudioInputDevices(devices)
+    })
+
     return () => {
       cancelled = true
     }
@@ -989,6 +997,7 @@ export function App() {
           <SettingsPage
             activePane={settingsPane}
             settings={appSettings}
+            audioInputDevices={audioInputDevices}
             storageMode={storageMode}
             onSelectPane={setSettingsPane}
             onUpdateSettings={updateSettings}
@@ -1946,6 +1955,7 @@ function LibraryPage({
 function SettingsPage({
   activePane,
   settings,
+  audioInputDevices,
   storageMode,
   onSelectPane,
   onUpdateSettings,
@@ -1963,6 +1973,7 @@ function SettingsPage({
 }: {
   activePane: SettingsPane
   settings: AppSettings
+  audioInputDevices: AudioInputDevice[]
   storageMode: 'browser' | 'desktop'
   onSelectPane: (pane: SettingsPane) => void
   onUpdateSettings: (patch: Partial<AppSettings>) => void
@@ -1998,6 +2009,7 @@ function SettingsPage({
         <SettingsContent
           activePane={activePane}
           settings={settings}
+          audioInputDevices={audioInputDevices}
           storageMode={storageMode}
           onUpdateSettings={onUpdateSettings}
           apiKeyConfiguredByProvider={apiKeyConfiguredByProvider}
@@ -2020,6 +2032,7 @@ function SettingsPage({
 function SettingsContent({
   activePane,
   settings,
+  audioInputDevices,
   storageMode,
   onUpdateSettings,
   apiKeyConfiguredByProvider,
@@ -2036,6 +2049,7 @@ function SettingsContent({
 }: {
   activePane: SettingsPane
   settings: AppSettings
+  audioInputDevices: AudioInputDevice[]
   storageMode: 'browser' | 'desktop'
   onUpdateSettings: (patch: Partial<AppSettings>) => void
   apiKeyConfiguredByProvider: ApiKeyConfiguredMap
@@ -2068,10 +2082,14 @@ function SettingsContent({
           />
         </FieldGroup>
         <FieldGroup label="Recording input">
-          <SettingsInput label="Active source" value="Default microphone" readOnly />
+          <SettingsSelect
+            label="Input"
+            options={audioInputDeviceOptions(audioInputDevices, settings.audioInputDeviceName)}
+            value={settings.audioInputDeviceName}
+            onChange={(audioInputDeviceName) => onUpdateSettings({ audioInputDeviceName })}
+          />
           <p className="settings-hint">
-            System meeting audio is not captured in this build. ScreenCaptureKit support is required
-            for headphone meetings.
+            Choose a microphone, loopback, or aggregate input for meeting capture.
           </p>
         </FieldGroup>
         <FieldGroup label="Desktop controls">
@@ -2442,24 +2460,55 @@ function errorMessage(error: unknown): string {
   return 'Unknown error.'
 }
 
-async function realtimeCaptureOptions(
+async function audioCaptureOptions(
   settings: AppSettings,
   apiKeyRepository: ApiKeyRepository,
 ): Promise<AudioCaptureStartOptions> {
+  const inputDeviceName = settings.audioInputDeviceName.trim() || undefined
+  const baseOptions: AudioCaptureStartOptions = inputDeviceName ? { inputDeviceName } : {}
   const realtimeProvider = settings.realtimeTranscriptionProvider
   const keyProvider = providerKeyForRealtime(realtimeProvider)
 
   try {
     const hasApiKey = await apiKeyRepository.has(keyProvider)
-    if (!hasApiKey) return {}
+    if (!hasApiKey) return baseOptions
   } catch {
-    return {}
+    return baseOptions
   }
 
   return {
+    ...baseOptions,
     realtimeProvider,
     realtimeModel: settings.realtimeModel,
   }
+}
+
+function audioInputDeviceOptions(
+  devices: AudioInputDevice[],
+  selectedDeviceName: string,
+): Array<{ id: string; label: string }> {
+  const options = [
+    {
+      id: '',
+      label: 'Default microphone',
+    },
+    ...devices.map((device) => ({
+      id: device.name,
+      label: device.isDefault ? `${device.name} (Default)` : device.name,
+    })),
+  ]
+
+  if (
+    selectedDeviceName &&
+    !options.some((option) => option.id === selectedDeviceName)
+  ) {
+    options.push({
+      id: selectedDeviceName,
+      label: `${selectedDeviceName} (Unavailable)`,
+    })
+  }
+
+  return options
 }
 
 async function startMeetingSetupError(

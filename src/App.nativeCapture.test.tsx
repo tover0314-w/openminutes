@@ -14,13 +14,18 @@ const captureMocks = vi.hoisted(() => {
   }))
   const status = vi.fn(async () => ({ recording: false }))
   const deleteFile = vi.fn(async () => ({ path: '/tmp/native-recording.wav', deleted: true }))
+  const listInputDevices = vi.fn(async () => [
+    { id: 'MacBook Microphone', name: 'MacBook Microphone', isDefault: true },
+    { id: 'BlackHole 2ch', name: 'BlackHole 2ch', isDefault: false },
+  ])
 
   return {
     start,
     stop,
     status,
     deleteFile,
-    create: vi.fn(async () => ({ start, stop, status, deleteFile })),
+    listInputDevices,
+    create: vi.fn(async () => ({ start, stop, status, deleteFile, listInputDevices })),
   }
 })
 
@@ -42,6 +47,7 @@ const realtimeMocks = vi.hoisted(() => {
 
 vi.mock('./desktop/audioCapture', () => ({
   createTauriAudioCaptureSession: captureMocks.create,
+  listTauriAudioInputDevices: captureMocks.listInputDevices,
 }))
 
 vi.mock('./desktop/realtimeTranscript', () => ({
@@ -60,6 +66,7 @@ describe('App native microphone capture', () => {
     captureMocks.stop.mockClear()
     captureMocks.status.mockClear()
     captureMocks.deleteFile.mockClear()
+    captureMocks.listInputDevices.mockClear()
     captureMocks.create.mockClear()
     realtimeMocks.listen.mockClear()
     realtimeMocks.handlers.onLine = undefined
@@ -213,6 +220,33 @@ describe('App native microphone capture', () => {
       expect(captureMocks.deleteFile).toHaveBeenCalledWith('/tmp/native-recording.wav')
     })
     expect(screen.queryByText(/^raw audio$/i)).not.toBeInTheDocument()
+  })
+
+  it('passes the selected audio input device into native capture', async () => {
+    const user = userEvent.setup()
+    localStorage.setItem(
+      APP_SETTINGS_STORAGE_KEY,
+      JSON.stringify({
+        ...defaultAppSettings,
+        transcriptionMode: 'local-demo',
+        notesMode: 'local-demo',
+      }),
+    )
+
+    render(<App />)
+
+    await user.click(screen.getByRole('button', { name: /settings/i }))
+    await waitFor(() => {
+      expect(screen.getByLabelText(/^input$/i)).toBeInTheDocument()
+    })
+    await user.selectOptions(screen.getByLabelText(/^input$/i), 'BlackHole 2ch')
+    await user.click(screen.getByRole('button', { name: /start meeting/i }))
+
+    await waitFor(() => {
+      expect(captureMocks.start).toHaveBeenCalledWith(expect.stringMatching(/^meeting-/), {
+        inputDeviceName: 'BlackHole 2ch',
+      })
+    })
   })
 
   it('shows string errors from native capture instead of a generic unknown error', async () => {

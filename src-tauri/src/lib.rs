@@ -4,7 +4,8 @@ pub mod doubao_realtime;
 mod storage;
 
 use audio_capture::{
-    AudioCaptureManager, AudioCaptureStatus, CapturedAudioFile, DeletedAudioCaptureFile,
+    AudioCaptureManager, AudioCaptureStatus, AudioInputDevice, CapturedAudioFile,
+    DeletedAudioCaptureFile,
 };
 use keyring::{Entry, Error as KeyringError};
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
@@ -268,6 +269,7 @@ fn start_audio_capture(
     app: AppHandle,
     state: State<'_, AudioCaptureManager>,
     meeting_id: String,
+    input_device_name: Option<String>,
     realtime_provider: Option<String>,
     realtime_model: Option<String>,
 ) -> Result<AudioCaptureStatus, String> {
@@ -295,7 +297,12 @@ fn start_audio_capture(
         _ => None,
     };
 
-    state.start(&app, &meeting_id, realtime_config)
+    state.start(&app, &meeting_id, input_device_name, realtime_config)
+}
+
+#[tauri::command]
+fn list_audio_input_devices() -> Result<Vec<AudioInputDevice>, String> {
+    audio_capture::list_input_devices()
 }
 
 #[tauri::command]
@@ -358,6 +365,7 @@ pub fn run() {
             transcribe_audio_with_doubao,
             export_meeting_markdown,
             start_audio_capture,
+            list_audio_input_devices,
             stop_audio_capture,
             audio_capture_status,
             delete_audio_capture_file,

@@ -35,6 +35,14 @@ describe('normalizeAppSettings', () => {
     expect(settings.notesMode).toBe('local-demo')
   })
 
+  it('keeps the selected audio input device name', () => {
+    const settings = normalizeAppSettings({
+      audioInputDeviceName: 'BlackHole 2ch',
+    })
+
+    expect(settings.audioInputDeviceName).toBe('BlackHole 2ch')
+  })
+
   it('keeps cloud provider selections for transcription and AI Notes', () => {
     const settings = normalizeAppSettings({
       aiProvider: 'openrouter',

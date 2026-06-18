@@ -50,6 +50,14 @@ pub struct AudioCaptureStatus {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct AudioInputDevice {
+    id: String,
+    name: String,
+    is_default: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CapturedAudioFile {
     path: String,
     file_name: String,
@@ -85,6 +93,7 @@ enum CaptureCommand {
         app: AppHandle,
         capture_dir: PathBuf,
         meeting_id: String,
+        input_device_name: Option<String>,
         realtime_config: Option<RealtimeTranscriptionConfig>,
         response: mpsc::Sender<Result<AudioCaptureStatus, String>>,
     },
@@ -111,6 +120,7 @@ impl AudioCaptureManager {
         &self,
         app: &AppHandle,
         meeting_id: &str,
+        input_device_name: Option<String>,
         realtime_config: Option<RealtimeTranscriptionConfig>,
     ) -> Result<AudioCaptureStatus, String> {
         let capture_dir = capture_dir(app)?;
@@ -119,6 +129,7 @@ impl AudioCaptureManager {
             app,
             capture_dir,
             meeting_id: meeting_id.to_string(),
+            input_device_name,
             realtime_config,
             response,
         })
@@ -145,6 +156,38 @@ impl AudioCaptureManager {
     }
 }
 
+pub fn list_input_devices() -> Result<Vec<AudioInputDevice>, String> {
+    let host = cpal::default_host();
+    let default_name = host
+        .default_input_device()
+        .and_then(|device| device.name().ok());
+    let devices = host
+        .input_devices()
+        .map_err(|error| format!("Could not list audio input devices: {error}"))?;
+    let mut result = Vec::new();
+
+    for device in devices {
+        let name = device
+            .name()
+            .unwrap_or_else(|_| "Unknown input device".to_string());
+        result.push(AudioInputDevice {
+            id: name.clone(),
+            is_default: default_name.as_deref() == Some(name.as_str()),
+            name,
+        });
+    }
+
+    result.sort_by(|left, right| {
+        right
+            .is_default
+            .cmp(&left.is_default)
+            .then_with(|| left.name.to_lowercase().cmp(&right.name.to_lowercase()))
+    });
+    result.dedup_by(|left, right| left.name == right.name);
+
+    Ok(result)
+}
+
 fn run_capture_actor(receiver: mpsc::Receiver<CaptureCommand>) {
     let mut active = None;
 
@@ -154,6 +197,7 @@ fn run_capture_actor(receiver: mpsc::Receiver<CaptureCommand>) {
                 app,
                 capture_dir,
                 meeting_id,
+                input_device_name,
                 realtime_config,
                 response,
             } => {
@@ -162,6 +206,7 @@ fn run_capture_actor(receiver: mpsc::Receiver<CaptureCommand>) {
                     app,
                     capture_dir,
                     &meeting_id,
+                    input_device_name,
                     realtime_config,
                 ));
             }
@@ -196,6 +241,7 @@ fn start_capture(
     app: AppHandle,
     capture_dir: PathBuf,
     meeting_id: &str,
+    input_device_name: Option<String>,
     realtime_config: Option<RealtimeTranscriptionConfig>,
 ) -> Result<AudioCaptureStatus, String> {
     if active.is_some() {
@@ -203,9 +249,7 @@ fn start_capture(
     }
 
     let host = cpal::default_host();
-    let device = host
-        .default_input_device()
-        .ok_or_else(|| "No default microphone input device was found.".to_string())?;
+    let device = select_input_device(&host, input_device_name.as_deref())?;
     let device_name = device
         .name()
         .unwrap_or_else(|_| "Default microphone".to_string());
@@ -276,6 +320,32 @@ fn start_capture(
     });
 
     Ok(capture_status(active.as_ref()))
+}
+
+fn select_input_device(
+    host: &cpal::Host,
+    input_device_name: Option<&str>,
+) -> Result<cpal::Device, String> {
+    let requested_name = input_device_name
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let Some(requested_name) = requested_name else {
+        return host
+            .default_input_device()
+            .ok_or_else(|| "No default microphone input device was found.".to_string());
+    };
+
+    let mut devices = host
+        .input_devices()
+        .map_err(|error| format!("Could not list audio input devices: {error}"))?;
+    devices
+        .find(|device| {
+            device
+                .name()
+                .map(|name| name == requested_name)
+                .unwrap_or(false)
+        })
+        .ok_or_else(|| format!("Audio input device was not found: {requested_name}"))
 }
 
 fn stop_capture(

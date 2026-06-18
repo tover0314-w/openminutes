@@ -8,6 +8,12 @@ export interface AudioCaptureStatus {
   startedAtUnixSeconds?: number
 }
 
+export interface AudioInputDevice {
+  id: string
+  name: string
+  isDefault: boolean
+}
+
 export interface CapturedAudioPayload {
   path: string
   fileName: string
@@ -30,6 +36,7 @@ export interface DeletedAudioCaptureFile {
 }
 
 export interface AudioCaptureStartOptions {
+  inputDeviceName?: string
   realtimeProvider?: RealtimeTranscriptionProviderId
   realtimeModel?: string
 }
@@ -40,13 +47,19 @@ export class TauriAudioCaptureSession {
   start(meetingId: string, options: AudioCaptureStartOptions = {}): Promise<AudioCaptureStatus> {
     const payload: {
       meetingId: string
+      inputDeviceName?: string
       realtimeProvider?: RealtimeTranscriptionProviderId
       realtimeModel?: string
     } = { meetingId }
+    if (options.inputDeviceName) payload.inputDeviceName = options.inputDeviceName
     if (options.realtimeProvider) payload.realtimeProvider = options.realtimeProvider
     if (options.realtimeModel) payload.realtimeModel = options.realtimeModel
 
     return this.invoke<AudioCaptureStatus>('start_audio_capture', payload)
+  }
+
+  listInputDevices(): Promise<AudioInputDevice[]> {
+    return this.invoke<AudioInputDevice[]>('list_audio_input_devices')
   }
 
   async stop({ keepFile = false }: { keepFile?: boolean } = {}): Promise<CapturedAudioResult> {
@@ -77,4 +90,13 @@ export async function createTauriAudioCaptureSession(): Promise<
 
   const invoke = await getTauriInvoke()
   return invoke ? new TauriAudioCaptureSession(invoke) : undefined
+}
+
+export async function listTauriAudioInputDevices(): Promise<AudioInputDevice[]> {
+  if (!isTauriRuntime()) return []
+
+  const invoke = await getTauriInvoke()
+  if (!invoke) return []
+
+  return new TauriAudioCaptureSession(invoke).listInputDevices()
 }

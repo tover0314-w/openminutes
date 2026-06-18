@@ -26,6 +26,11 @@ describe('TauriAudioCaptureSession', () => {
       if (command === 'audio_capture_status') {
         return { recording: false }
       }
+      if (command === 'list_audio_input_devices') {
+        return [
+          { id: 'MacBook Microphone', name: 'MacBook Microphone', isDefault: true },
+        ]
+      }
       if (command === 'delete_audio_capture_file') {
         return { path: '/tmp/recording.wav', deleted: true }
       }
@@ -38,6 +43,9 @@ describe('TauriAudioCaptureSession', () => {
       deviceName: 'MacBook Microphone',
     })
     const result = await session.stop()
+    await expect(session.listInputDevices()).resolves.toEqual([
+      { id: 'MacBook Microphone', name: 'MacBook Microphone', isDefault: true },
+    ])
     await expect(session.status()).resolves.toEqual({ recording: false })
     await expect(session.deleteFile('/tmp/recording.wav')).resolves.toEqual({
       path: '/tmp/recording.wav',
@@ -48,6 +56,7 @@ describe('TauriAudioCaptureSession', () => {
       meetingId: 'product-sync-alex',
     })
     expect(invoke).toHaveBeenCalledWith('stop_audio_capture', { keepFile: false })
+    expect(invoke).toHaveBeenCalledWith('list_audio_input_devices')
     expect(invoke).toHaveBeenCalledWith('audio_capture_status')
     expect(invoke).toHaveBeenCalledWith('delete_audio_capture_file', {
       path: '/tmp/recording.wav',
@@ -87,12 +96,14 @@ describe('TauriAudioCaptureSession', () => {
     const session = new TauriAudioCaptureSession(invoke)
 
     await session.start('meeting-1', {
+      inputDeviceName: 'BlackHole 2ch',
       realtimeProvider: 'deepgram',
       realtimeModel: 'nova-3',
     })
 
     expect(invoke).toHaveBeenCalledWith('start_audio_capture', {
       meetingId: 'meeting-1',
+      inputDeviceName: 'BlackHole 2ch',
       realtimeProvider: 'deepgram',
       realtimeModel: 'nova-3',
     })
