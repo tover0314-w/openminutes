@@ -175,7 +175,7 @@ fn websocket_url(
         ("vad_events", "true".to_string()),
         ("punctuate", "true".to_string()),
         ("smart_format", "true".to_string()),
-        ("diarize", "true".to_string()),
+        ("diarize_model", "latest".to_string()),
         ("language", language_for_config(config).to_string()),
     ];
     let query = params
@@ -343,7 +343,7 @@ mod tests {
         assert!(url.contains("encoding=linear16"));
         assert!(url.contains("sample_rate=16000"));
         assert!(url.contains("interim_results=true"));
-        assert!(url.contains("diarize=true"));
+        assert!(url.contains("diarize_model=latest"));
         assert!(url.contains("language=zh"));
     }
 

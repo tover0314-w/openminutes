@@ -21,6 +21,9 @@ const CAPTURE_DIR_NAME: &str = "Recordings";
 const CAPTURE_READ_LIMIT_BYTES: u64 = 100 * 1024 * 1024;
 const REALTIME_TRANSCRIPT_EVENT: &str = "openminutes:realtime-transcript";
 const REALTIME_TRANSCRIPT_ERROR_EVENT: &str = "openminutes:realtime-transcript-error";
+const MIN_REVISION_LENGTH: usize = 3;
+const MIN_FUZZY_PREFIX_LENGTH: usize = 4;
+const FUZZY_PREFIX_RATIO: f64 = 0.66;
 
 type SharedWavWriter = Arc<Mutex<Option<WavWriter<BufWriter<File>>>>>;
 type SharedRealtimeSender = Arc<Mutex<Option<tokio_mpsc::UnboundedSender<Vec<i16>>>>>;
@@ -495,6 +498,7 @@ fn start_realtime_transcription(
         let mut current_line_id = String::new();
         let mut current_line_time = String::new();
         let mut current_line_text = String::new();
+        let mut current_line_final = false;
         let mut speaker_labels = RealtimeSpeakerLabels::default();
         let emit_app = app.clone();
         let emit_meeting_id = meeting_id.clone();
@@ -504,13 +508,19 @@ fn start_realtime_transcription(
                 return;
             }
 
-            if should_start_new_realtime_line(&current_line_id, &current_line_text, &text) {
+            if should_start_new_realtime_line(
+                &current_line_id,
+                &current_line_text,
+                current_line_final,
+                &text,
+            ) {
                 line_index += 1;
                 current_line_id = format!("{}-live-{}", emit_meeting_id, line_index);
                 current_line_time = format_clock_time(started_at.elapsed().as_millis() as u64);
             }
 
             current_line_text = text.clone();
+            current_line_final = final_phase;
             let payload = RealtimeTranscriptPayload {
                 meeting_id: emit_meeting_id.clone(),
                 line: RealtimeTranscriptLine {
@@ -579,16 +589,28 @@ fn should_emit_realtime_update(
     next_text: &str,
     final_phase: bool,
 ) -> bool {
-    !next_text.trim().is_empty() && (next_text != current_line_text || final_phase)
+    let next_text = next_text.trim();
+    !next_text.is_empty()
+        && (final_phase || canonical_transcript_text(next_text).chars().count() >= MIN_REVISION_LENGTH)
+        && (next_text != current_line_text || final_phase)
 }
 
 fn should_start_new_realtime_line(
     current_line_id: &str,
     current_line_text: &str,
+    current_line_final: bool,
     next_text: &str,
 ) -> bool {
-    current_line_id.is_empty()
-        || (next_text != current_line_text && !is_realtime_revision(current_line_text, next_text))
+    if current_line_id.is_empty() {
+        return true;
+    }
+    if next_text == current_line_text {
+        return false;
+    }
+    if is_strict_realtime_revision(current_line_text, next_text) {
+        return false;
+    }
+    current_line_final || !is_fuzzy_realtime_revision(current_line_text, next_text)
 }
 
 fn close_realtime_sender(sender: &SharedRealtimeSender) {
@@ -597,20 +619,75 @@ fn close_realtime_sender(sender: &SharedRealtimeSender) {
     }
 }
 
+#[cfg(test)]
 fn is_realtime_revision(previous: &str, next: &str) -> bool {
+    is_strict_realtime_revision(previous, next) || is_fuzzy_realtime_revision(previous, next)
+}
+
+fn is_strict_realtime_revision(previous: &str, next: &str) -> bool {
     let previous = canonical_transcript_text(previous);
     let next = canonical_transcript_text(next);
-    previous.len() >= 3
-        && next.len() >= 3
-        && (next.starts_with(&previous) || previous.starts_with(&next))
+    let previous_len = previous.chars().count();
+    let next_len = next.chars().count();
+    if previous_len < MIN_REVISION_LENGTH || next_len < MIN_REVISION_LENGTH {
+        return false;
+    }
+
+    if next.starts_with(&previous) || previous.starts_with(&next) {
+        return true;
+    }
+
+    false
+}
+
+fn is_fuzzy_realtime_revision(previous: &str, next: &str) -> bool {
+    let previous = canonical_transcript_text(previous);
+    let next = canonical_transcript_text(next);
+    let previous_len = previous.chars().count();
+    let next_len = next.chars().count();
+    if previous_len < MIN_REVISION_LENGTH || next_len < MIN_REVISION_LENGTH {
+        return false;
+    }
+
+    let shared_prefix = common_prefix_length(&previous, &next);
+    let shorter_len = previous_len.min(next_len);
+    shared_prefix >= MIN_FUZZY_PREFIX_LENGTH
+        && (shared_prefix as f64 / shorter_len as f64) >= FUZZY_PREFIX_RATIO
 }
 
 fn canonical_transcript_text(value: &str) -> String {
-    value
-        .chars()
-        .filter(|character| character.is_alphanumeric())
-        .flat_map(char::to_lowercase)
-        .collect()
+    let mut output = String::new();
+    for character in value.chars().filter(|character| character.is_alphanumeric()) {
+        if let Some(digit) = canonical_chinese_number(character) {
+            output.push(digit);
+        } else {
+            output.extend(character.to_lowercase());
+        }
+    }
+    output
+}
+
+fn canonical_chinese_number(character: char) -> Option<char> {
+    match character {
+        '零' | '〇' => Some('0'),
+        '一' => Some('1'),
+        '二' | '两' => Some('2'),
+        '三' => Some('3'),
+        '四' => Some('4'),
+        '五' => Some('5'),
+        '六' => Some('6'),
+        '七' => Some('7'),
+        '八' => Some('8'),
+        '九' => Some('9'),
+        _ => None,
+    }
+}
+
+fn common_prefix_length(left: &str, right: &str) -> usize {
+    left.chars()
+        .zip(right.chars())
+        .take_while(|(left, right)| left == right)
+        .count()
 }
 
 #[derive(Default)]
@@ -809,8 +886,21 @@ mod tests {
             "来，有请第二位人士说话，可是我现在",
             "来，有请第二位人士说话。可是我现在在刷牙"
         ));
+        assert!(is_realtime_revision(
+            "先确认实时转录不要重复行",
+            "先确认实时转录不要重复显示。"
+        ));
+        assert!(is_realtime_revision(
+            "我补充第二个观点用户带",
+            "我补充第二个观点用户戴耳机的时候"
+        ));
+        assert!(is_realtime_revision(
+            "我补充第二个观点用户戴耳机的时候",
+            "我补充第2个观点用户戴耳机的"
+        ));
         assert!(is_realtime_revision("hello there", "hello"));
         assert!(!is_realtime_revision("我已经把它打开了", "但是新的句子"));
+        assert!(!is_realtime_revision("必须录到电脑声音", "我们先确认实时转录"));
     }
 
     #[test]
@@ -830,19 +920,35 @@ mod tests {
             "  ",
             true
         ));
+        assert!(!should_emit_realtime_update("", "我们", false));
+        assert!(should_emit_realtime_update("", "我们先确认", false));
     }
 
     #[test]
     fn keeps_revisions_on_the_same_realtime_line() {
-        assert!(should_start_new_realtime_line("", "", "我正在测试"));
+        assert!(should_start_new_realtime_line("", "", false, "我正在测试"));
         assert!(!should_start_new_realtime_line(
             "meeting-live-1",
-            "我正在",
-            "我正在测试"
+            "先确认实时转录不要重复行",
+            false,
+            "先确认实时转录不要重复显示。"
+        ));
+        assert!(!should_start_new_realtime_line(
+            "meeting-live-1",
+            "我补充第二个观点用户戴耳机的时候",
+            false,
+            "我补充第2个观点用户戴耳机的"
+        ));
+        assert!(should_start_new_realtime_line(
+            "meeting-live-1",
+            "我们先确认方案一",
+            true,
+            "我们先确认方案二"
         ));
         assert!(should_start_new_realtime_line(
             "meeting-live-1",
             "我正在测试",
+            false,
             "这是下一句话"
         ));
     }

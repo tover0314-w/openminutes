@@ -43,6 +43,7 @@ import {
 } from './domain/citations'
 import { createCapsuleStatePayload } from './domain/capsule'
 import { formatAiNotesDocument, formatMeetingMarkdown } from './domain/markdown'
+import { canonicalTranscriptText, isTranscriptRevision } from './domain/transcriptRevision'
 import {
   createAiNotesProvider,
   createTranscriptionProvider,
@@ -2565,22 +2566,6 @@ function findTranscriptRevisionIndex(transcript: TranscriptLine[], line: Transcr
   }
 
   return -1
-}
-
-function isTranscriptRevision(previous: string, next: string): boolean {
-  const previousText = canonicalTranscriptText(previous)
-  const nextText = canonicalTranscriptText(next)
-  return (
-    previousText.length >= 3 &&
-    nextText.length >= 3 &&
-    (nextText.startsWith(previousText) || previousText.startsWith(nextText))
-  )
-}
-
-function canonicalTranscriptText(value: string): string {
-  return Array.from(value.toLowerCase())
-    .filter((character) => /[\p{Letter}\p{Number}]/u.test(character))
-    .join('')
 }
 
 function longerTranscriptText(left: string, right: string): string {

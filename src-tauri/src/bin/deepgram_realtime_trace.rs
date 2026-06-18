@@ -11,6 +11,10 @@ use std::{
 };
 use tokio::sync::mpsc;
 
+const MIN_REVISION_LENGTH: usize = 3;
+const MIN_FUZZY_PREFIX_LENGTH: usize = 4;
+const FUZZY_PREFIX_RATIO: f64 = 0.66;
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct TraceEvent {
@@ -268,17 +272,55 @@ fn final_text_from_events(events: &[TraceEvent]) -> Option<String> {
 fn is_realtime_revision(previous: &str, next: &str) -> bool {
     let previous = canonical_transcript_text(previous);
     let next = canonical_transcript_text(next);
-    previous.len() >= 3
-        && next.len() >= 3
-        && (next.starts_with(&previous) || previous.starts_with(&next))
+    let previous_len = previous.chars().count();
+    let next_len = next.chars().count();
+    if previous_len < MIN_REVISION_LENGTH || next_len < MIN_REVISION_LENGTH {
+        return false;
+    }
+
+    if next.starts_with(&previous) || previous.starts_with(&next) {
+        return true;
+    }
+
+    let shared_prefix = common_prefix_length(&previous, &next);
+    let shorter_len = previous_len.min(next_len);
+    shared_prefix >= MIN_FUZZY_PREFIX_LENGTH
+        && (shared_prefix as f64 / shorter_len as f64) >= FUZZY_PREFIX_RATIO
 }
 
 fn canonical_transcript_text(value: &str) -> String {
-    value
-        .chars()
-        .filter(|character| character.is_alphanumeric())
-        .flat_map(char::to_lowercase)
-        .collect()
+    let mut output = String::new();
+    for character in value.chars().filter(|character| character.is_alphanumeric()) {
+        if let Some(digit) = canonical_chinese_number(character) {
+            output.push(digit);
+        } else {
+            output.extend(character.to_lowercase());
+        }
+    }
+    output
+}
+
+fn canonical_chinese_number(character: char) -> Option<char> {
+    match character {
+        '零' | '〇' => Some('0'),
+        '一' => Some('1'),
+        '二' | '两' => Some('2'),
+        '三' => Some('3'),
+        '四' => Some('4'),
+        '五' => Some('5'),
+        '六' => Some('6'),
+        '七' => Some('7'),
+        '八' => Some('8'),
+        '九' => Some('9'),
+        _ => None,
+    }
+}
+
+fn common_prefix_length(left: &str, right: &str) -> usize {
+    left.chars()
+        .zip(right.chars())
+        .take_while(|(left, right)| left == right)
+        .count()
 }
 
 fn print_json(output: &TraceOutput) {
